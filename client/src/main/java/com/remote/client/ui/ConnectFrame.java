@@ -157,4 +157,16 @@ public class ConnectFrame extends JFrame {
         txtPasscode.setEnabled(enabled);
         btnConnect.setEnabled(enabled);
     }
+
+    public static void main(String[] args) {
+        try {
+            // Set giao diện chuẩn theo hệ điều hành (cho đẹp)
+            javax.swing.UIManager.setLookAndFeel(javax.swing.UIManager.getSystemLookAndFeelClassName());
+        } catch (Exception ignored) {}
+
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            ConnectFrame frame = new ConnectFrame();
+            frame.setVisible(true);
+        });
+    }
 }
