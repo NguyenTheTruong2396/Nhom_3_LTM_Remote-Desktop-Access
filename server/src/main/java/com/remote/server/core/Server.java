@@ -40,7 +40,7 @@ public class Server {
             dis.readFully(payloadBytes);
             
             String payload = new String(payloadBytes, StandardCharsets.UTF_8);
-            System.out.println("[MockServer] Nhận gói tin Auth: Type=" + packetType + " | Payload=" + payload);
+            System.out.println("[Server] Received Auth packet: Type=" + packetType + " | Payload=" + payload);
 
             // Tách ID và Passcode
             String[] parts = payload.split("\\|");
@@ -56,10 +56,10 @@ public class Server {
             dos.writeByte(statusResult);  // 1: Thành công, 0: Thất bại
             dos.flush();
 
-            System.out.println("[MockServer] Đã trả về kết quả Auth Status: " + statusResult);
-
+            System.out.println("Server] Auth Status result returned: " + statusResult);
+           
         } catch (IOException e) {
-            System.err.println("[MockServer] Lỗi kết nối Client: " + e.getMessage());
+            System.err.println("[Server] Error Connected Client: " + e.getMessage());
         }
     }
 }
