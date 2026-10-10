@@ -24,6 +24,14 @@ public class JniBridge {
     public static native void testJni();
 
     /**
+     * Chụp màn hình và nén sang JPEG in-memory trực tiếp bằng C/C++ GDI và STB.
+     *
+     * @param quality Mức chất lượng nén JPEG (1 - 100)
+     * @return Mảng byte ảnh JPEG đã nén, hoặc null nếu lỗi
+     */
+    public static native byte[] captureFrame(int quality);
+
+    /**
      * Loads the native library by extracting it from resources to a temp file,
      * then invoking System.load.
      *
