@@ -34,8 +34,14 @@ public:
         bmi.bmiHeader.biCompression = BI_RGB;
 
         hBitmap = CreateDIBSection(hMemoryDC, &bmi, DIB_RGB_COLORS, &pBits, NULL, 0);
+        if (!hBitmap || !pBits) {
+            std::cerr << "[ScreenCapturer] Loi CreateDIBSection: " << GetLastError() << "\n";
+        }
         if (hBitmap) {
             hOldBitmap = (HBITMAP)SelectObject(hMemoryDC, hBitmap);
+            if (!hOldBitmap) {
+                std::cerr << "[ScreenCapturer] Loi SelectObject: " << GetLastError() << "\n";
+            }
         }
     }
 
@@ -49,8 +55,13 @@ public:
 
     // Chụp lại màn hình vào bộ nhớ
     bool Capture() {
-        if (!hMemoryDC || !hScreenDC) return false;
-        return BitBlt(hMemoryDC, 0, 0, width, height, hScreenDC, 0, 0, SRCCOPY);
+        if (!hMemoryDC) return false;
+        HDC hScreen = GetDC(NULL);
+        if (!hScreen) return false;
+
+        BOOL res = BitBlt(hMemoryDC, 0, 0, width, height, hScreen, 0, 0, SRCCOPY | CAPTUREBLT);
+        ReleaseDC(NULL, hScreen);
+        return res != FALSE;
     }
 
     int GetWidth() const { return width; }
