@@ -18,6 +18,9 @@ import java.nio.file.Paths;
 import com.remote.server.nativeapi.JniBridge;
 import com.remote.server.nativeapi.NativeCapture;
 
+import com.remote.common.model.InputEventPacket;
+import com.remote.server.control.RobotEventReplayer;
+
 /**
  * Handles one incoming TCP connection using the TLV custom protocol.
  *
@@ -33,11 +36,14 @@ public class ClientHandler implements Runnable {
     private final Socket clientSocket;
     private final String clientAddress;
     private final SessionManager sessionManager;
+    private final RobotEventReplayer robotReplayer;
+    private VideoStreamSender videoStreamSender;
 
     public ClientHandler(Socket socket, SessionManager sessionManager) {
         this.clientSocket = socket;
         this.clientAddress = socket.getRemoteSocketAddress().toString();
         this.sessionManager = sessionManager;
+        this.robotReplayer = new RobotEventReplayer();
     }
 
     @Override
@@ -107,33 +113,14 @@ public class ClientHandler implements Runnable {
 
     /**
      * Called after successful authentication.
-     * Week 2: placeholder packet loop — will send one FRAME_DATA in Step 6.
+     * Starts continuous video stream and processes incoming packets (including input events).
      */
-    private void onAuthenticated(DataInputStream dis, DataOutputStream dos) throws IOException {
-        System.out.println("[ClientHandler] Session established, entering packet loop: " + clientAddress);
+     private void onAuthenticated(DataInputStream dis, DataOutputStream dos) throws IOException {
+        System.out.println("[ClientHandler] Session established, starting video stream: " + clientAddress);
 
-        // --- Step 6: Send initial frame ---
-        try {
-            byte[] jpegBytes;
-            if (JniBridge.isLibraryLoaded()) {
-                System.out.println("[ClientHandler] Capturing frame via JNI...");
-                jpegBytes = NativeCapture.captureAndCompress(60);
-            } else {
-                System.out.println("[ClientHandler] JNI not loaded, using fallback test_screen.jpg...");
-                Path testImagePath = Paths.get("..", "native-core", "src", "main", "cpp", "test_screen.jpg");
-                if (Files.exists(testImagePath)) {
-                    jpegBytes = Files.readAllBytes(testImagePath);
-                } else {
-                    System.out.println("[ClientHandler] test_screen.jpg not found at " + testImagePath.toAbsolutePath());
-                    jpegBytes = new byte[] { (byte)0xFF, (byte)0xD8, (byte)0xFF, (byte)0xD9 }; // Dummy empty JPEG
-                }
-            }
-            PacketBuilder.writeFrameData(dos, jpegBytes);
-            System.out.println("[ClientHandler] Sent initial FRAME_DATA (" + jpegBytes.length + " bytes) to " + clientAddress);
-        } catch (Exception e) {
-            System.err.println("[ClientHandler] Failed to send initial frame: " + e.getMessage());
-        }
-        // ----------------------------------
+        // Khởi động luồng phát video liên tục 30 FPS tới Client
+        this.videoStreamSender = new VideoStreamSender(clientSocket, dos);
+        this.videoStreamSender.start();
 
         while (!clientSocket.isClosed()) {
             try {
@@ -142,7 +129,9 @@ public class ClientHandler implements Runnable {
 
                 switch (packet.type()) {
                     case PacketType.PING:
-                        PacketBuilder.writeEmpty(dos, PacketType.PONG);
+                        synchronized (dos) {
+                            PacketBuilder.writeEmpty(dos, PacketType.PONG);
+                        }
                         System.out.println("[ClientHandler] Sent PONG to " + clientAddress);
                         break;
 
@@ -151,8 +140,13 @@ public class ClientHandler implements Runnable {
                         return;
 
                     case PacketType.INPUT_EVENT:
-                        // Will be handled by Dev 4 — log for now
-                        System.out.println("[ClientHandler] INPUT_EVENT: " + packet.payloadAsString());
+                        // Tái tạo sự kiện chuột/phím từ mảng 17 bytes nhị phân
+                        try {
+                            InputEventPacket event = InputEventPacket.fromBytes(packet.payload());
+                            robotReplayer.processEvent(event);
+                        } catch (Exception e) {
+                            System.err.println("[ClientHandler] Lỗi xử lý INPUT_EVENT: " + e.getMessage());
+                        }
                         break;
 
                     default:
@@ -167,6 +161,15 @@ public class ClientHandler implements Runnable {
     }
 
     private void closeSocket() {
+        // Dừng luồng phát video để tránh zombie thread và memory leak
+        if (videoStreamSender != null) {
+            try {
+                videoStreamSender.stop();
+            } catch (Exception e) {
+                System.err.println("[ClientHandler] Lỗi dừng video stream: " + e.getMessage());
+            }
+        }
+
         try {
             if (!clientSocket.isClosed()) {
                 clientSocket.close();
