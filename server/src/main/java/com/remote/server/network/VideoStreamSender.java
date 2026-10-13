@@ -1,5 +1,6 @@
 package com.remote.server.network;
 
+import com.remote.common.model.FramePacket;
 import com.remote.server.nativeapi.JniBridge;
 
 import javax.imageio.IIOImage;
@@ -155,8 +156,10 @@ public class VideoStreamSender implements Runnable {
                     // 2. Đóng gói thành FramePacket theo Binary Protocol
                     FramePacket packet = new FramePacket(frameStart, jpegData);
 
-                    // 3. Đẩy gói tin qua TCP Socket
-                    packet.writeTo(out);
+                    // 3. Đẩy gói tin qua TCP Socket (đồng bộ thread-safe với ClientHandler)
+                    synchronized (out) {
+                        packet.writeTo(out);
+                    }
 
                     frameCount++;
                     totalBytesSent += packet.getLength();
