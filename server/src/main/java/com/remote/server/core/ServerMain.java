@@ -37,6 +37,13 @@ public class ServerMain {
         System.out.println("[ServerMain] Starting TCP Server on port " + port + "...");
         SessionManager sessionManager = new SessionManager(port);
 
+        // Generate and display the initial session credentials
+        SessionManager.SessionInfo sessionInfo = sessionManager.createSession();
+        System.out.println("=========================================");
+        System.out.println("   Session ID : " + sessionInfo.getSessionId());
+        System.out.println("   Passcode   : " + sessionInfo.getPasscode());
+        System.out.println("=========================================");
+
         // Add shutdown hook for graceful exit
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             System.out.println("\n[ServerMain] Shutting down server...");
