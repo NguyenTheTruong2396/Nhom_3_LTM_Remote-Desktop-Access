@@ -12,9 +12,11 @@ import java.io.IOException;
  * để truyền liên tục qua kết nối TCP Socket tới Client theo chuẩn TLV 5 bytes:
  *
  * Header:
+
  *   [1 byte Type (0x03)] + [4 byte Length (int: 8 + N)]
  * Payload:
  *   [8 byte Timestamp (long)] + [N byte JPEG Data]
+
  */
 public class FramePacket {
 
@@ -59,7 +61,6 @@ public class FramePacket {
     /**
      * Đóng gói và ghi gói tin Frame ra Socket Output Stream theo chuẩn Header TLV 5 bytes:
      * [Type: 1 byte (0x03)] + [Length: 4 bytes (8 + N)] + [Timestamp: 8 bytes] + [JPEG Data: N bytes]
-     *
      * @param out DataOutputStream kết nối tới Socket
      * @throws IOException nếu xảy ra lỗi ghi mạng
      */
@@ -82,7 +83,6 @@ public class FramePacket {
 
     /**
      * Đọc và giải gói một FramePacket từ Socket Input Stream theo chuẩn TLV.
-     *
      * @param in DataInputStream từ Socket
      * @return Đối tượng FramePacket chứa timestamp và mảng byte JPEG
      * @throws IOException nếu kết nối đứt hoặc gói tin không đúng định dạng

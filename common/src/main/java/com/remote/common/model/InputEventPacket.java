@@ -22,6 +22,10 @@ public class InputEventPacket implements Serializable {
         KEY_RELEASE
     }
 
+    public static final int BUTTON_LEFT   = 1;
+    public static final int BUTTON_MIDDLE = 2;
+    public static final int BUTTON_RIGHT  = 3;
+
     private Type type;
     // Dùng tỉ lệ x, y từ 0.0f đến 1.0f để thích ứng mọi kích thước màn hình
     private float xRatio;
@@ -32,12 +36,18 @@ public class InputEventPacket implements Serializable {
 
     public InputEventPacket() {}
 
+    private static float clampRatio(float val) {
+        if (Float.isNaN(val) || val < 0.0f) return 0.0f;
+        if (val > 1.0f) return 1.0f;
+        return val;
+    }
+
     // Factory methods tiện lợi
     public static InputEventPacket createMouseMove(float x, float y) {
         InputEventPacket p = new InputEventPacket();
         p.type = Type.MOUSE_MOVE;
-        p.xRatio = x;
-        p.yRatio = y;
+        p.xRatio = clampRatio(x);
+        p.yRatio = clampRatio(y);
         return p;
     }
 
@@ -45,8 +55,8 @@ public class InputEventPacket implements Serializable {
         InputEventPacket p = new InputEventPacket();
         p.type = type;
         p.button = button;
-        p.xRatio = x;
-        p.yRatio = y;
+        p.xRatio = clampRatio(x);
+        p.yRatio = clampRatio(y);
         return p;
     }
 
@@ -124,4 +134,16 @@ public class InputEventPacket implements Serializable {
     public int getButton() { return button; }
     public int getWheelRotation() { return wheelRotation; }
     public int getKeyCode() { return keyCode; }
+
+    @Override
+    public String toString() {
+        return "InputEventPacket{" +
+                "type=" + type +
+                ", xRatio=" + String.format("%.3f", xRatio) +
+                ", yRatio=" + String.format("%.3f", yRatio) +
+                ", button=" + button +
+                ", wheelRotation=" + wheelRotation +
+                ", keyCode=" + keyCode +
+                '}';
+    }
 }
