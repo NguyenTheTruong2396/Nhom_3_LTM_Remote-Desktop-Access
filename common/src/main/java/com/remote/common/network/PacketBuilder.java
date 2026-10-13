@@ -82,13 +82,32 @@ public final class PacketBuilder {
     }
 
     /**
-     * Convenience: writes a FRAME_DATA packet containing a JPEG byte array.
+     * Convenience: writes a FRAME_DATA packet containing a timestamp and JPEG byte array.
+     *
+     * @param out       output stream
+     * @param timestamp capture timestamp in milliseconds
+     * @param jpegBytes raw JPEG bytes
+     * @throws IOException if an I/O error occurs
+     */
+    public static void writeFrameData(DataOutputStream out, long timestamp, byte[] jpegBytes) throws IOException {
+        int payloadLength = 8 + (jpegBytes != null ? jpegBytes.length : 0);
+        out.writeByte(PacketType.FRAME_DATA);
+        out.writeInt(payloadLength);
+        out.writeLong(timestamp);
+        if (jpegBytes != null && jpegBytes.length > 0) {
+            out.write(jpegBytes);
+        }
+        out.flush();
+    }
+
+    /**
+     * Convenience: writes a FRAME_DATA packet containing a JPEG byte array (with current timestamp).
      *
      * @param out       output stream
      * @param jpegBytes raw JPEG bytes
      * @throws IOException if an I/O error occurs
      */
     public static void writeFrameData(DataOutputStream out, byte[] jpegBytes) throws IOException {
-        write(out, PacketType.FRAME_DATA, jpegBytes);
+        writeFrameData(out, System.currentTimeMillis(), jpegBytes);
     }
 }

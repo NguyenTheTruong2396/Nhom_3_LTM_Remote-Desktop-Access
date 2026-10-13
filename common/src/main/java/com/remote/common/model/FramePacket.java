@@ -1,4 +1,6 @@
-package com.remote.server.network;
+package com.remote.common.model;
+
+import com.remote.common.network.PacketType;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
@@ -7,15 +9,17 @@ import java.io.IOException;
 /**
  * Lớp đại diện cho gói tin Video Frame (khung hình màn hình).
  * Đóng gói dữ liệu ảnh nén JPEG kèm theo thông tin kích thước và timestamp
- * để truyền liên tục qua kết nối TCP Socket tới Client theo tài liệu kiến trúc.
+ * để truyền liên tục qua kết nối TCP Socket tới Client theo chuẩn TLV 5 bytes:
+ *
+ * Header:
+ *   [1 byte Type (0x03)] + [4 byte Length (int: 8 + N)]
+ * Payload:
+ *   [8 byte Timestamp (long)] + [N byte JPEG Data]
  */
 public class FramePacket {
 
-    /**
-     * Mã định danh loại gói tin Video Frame trong Custom Protocol TCP.
-     * 0x01: AUTH_REQ | 0x02: AUTH_RESP | 0x03: VIDEO_FRAME | 0x04: INPUT_EVENT
-     */
-    public static final byte PACKET_TYPE_FRAME = 0x03;
+    /** Mã loại gói tin frame (xem PacketType.FRAME_DATA). */
+    public static final byte PACKET_TYPE_FRAME = PacketType.FRAME_DATA;
 
     private final long timestamp;
     private final byte[] data;
@@ -53,55 +57,56 @@ public class FramePacket {
     }
 
     /**
-     * Đóng gói và ghi gói tin Frame ra Socket Output Stream theo Binary Protocol:
-     * [Packet Type (1 byte)] + [Timestamp (8 bytes)] + [Data Length (4 bytes)] + [JPEG Payload (N bytes)]
+     * Đóng gói và ghi gói tin Frame ra Socket Output Stream theo chuẩn Header TLV 5 bytes:
+     * [Type: 1 byte (0x03)] + [Length: 4 bytes (8 + N)] + [Timestamp: 8 bytes] + [JPEG Data: N bytes]
      *
-     * @param out DataOutputStream kết nối tới Client
+     * @param out DataOutputStream kết nối tới Socket
      * @throws IOException nếu xảy ra lỗi ghi mạng
      */
     public void writeTo(DataOutputStream out) throws IOException {
-        if (data == null || data.length == 0) {
-            return;
+        int imageSize = (data != null) ? data.length : 0;
+        int payloadLength = 8 + imageSize;
+
+        // 1. Header TLV (5 bytes)
+        out.writeByte(PACKET_TYPE_FRAME);
+        out.writeInt(payloadLength);
+
+        // 2. Payload (8 + N bytes)
+        out.writeLong(timestamp);
+        if (imageSize > 0) {
+            out.write(data, 0, imageSize);
         }
 
-        // 1. Header: Loại gói tin
-        out.writeByte(PACKET_TYPE_FRAME);
-
-        // 2. Header: Thời gian chụp (dùng để Client đo độ trễ mạng - latency)
-        out.writeLong(timestamp);
-
-        // 3. Header: Độ dài mảng byte JPEG
-        out.writeInt(data.length);
-
-        // 4. Payload: Dữ liệu ảnh JPEG nén
-        out.write(data, 0, data.length);
-
-        // Đẩy ngay dữ liệu đi để giảm độ trễ
         out.flush();
     }
 
     /**
-     * Đọc và giải gói một FramePacket từ Socket Input Stream (tiện ích cho phía Client đọc).
+     * Đọc và giải gói một FramePacket từ Socket Input Stream theo chuẩn TLV.
      *
-     * @param in DataInputStream từ Server
+     * @param in DataInputStream từ Socket
      * @return Đối tượng FramePacket chứa timestamp và mảng byte JPEG
      * @throws IOException nếu kết nối đứt hoặc gói tin không đúng định dạng
      */
     public static FramePacket readFrom(DataInputStream in) throws IOException {
         byte type = in.readByte();
         if (type != PACKET_TYPE_FRAME) {
-            throw new IOException("Gói tin không hợp lệ, mong đợi VIDEO_FRAME (0x03) nhưng nhận được: " + type);
+            throw new IOException("Gói tin không hợp lệ, mong đợi FRAME_DATA (0x03) nhưng nhận được: " + type);
         }
 
-        long timestamp = in.readLong();
         int length = in.readInt();
-
-        if (length < 0 || length > 10 * 1024 * 1024) { // Giới hạn an toàn 10MB/frame
+        if (length < 8) {
+            throw new IOException("Kích thước frame payload không hợp lệ (nhỏ hơn 8 bytes timestamp): " + length);
+        }
+        if (length > 15 * 1024 * 1024) { // Giới hạn an toàn 15MB/frame
             throw new IOException("Kích thước frame bất thường: " + length + " bytes");
         }
 
-        byte[] payload = new byte[length];
-        in.readFully(payload);
+        long timestamp = in.readLong();
+        int imageSize = length - 8;
+        byte[] payload = new byte[imageSize];
+        if (imageSize > 0) {
+            in.readFully(payload);
+        }
 
         return new FramePacket(timestamp, payload);
     }
