@@ -39,6 +39,7 @@ public class ClientHandler implements Runnable {
     private final RobotEventReplayer robotReplayer;
     private VideoStreamSender videoStreamSender;
 
+
     private java.io.FileOutputStream fileOutputStream;
     private String receivingFileName;
     private long receivingFileSize;
@@ -154,6 +155,7 @@ public class ClientHandler implements Runnable {
                         }
                         break;
 
+
                     case PacketType.FILE_META: {
                         String payload = packet.payloadAsString();
                         String[] parts = payload.split("\\|", 2);
@@ -209,6 +211,7 @@ public class ClientHandler implements Runnable {
                 System.err.println("[ClientHandler] Lỗi dừng video stream: " + e.getMessage());
             }
         }
+
 
         if (fileOutputStream != null) {
             try {

@@ -26,7 +26,7 @@ public class EventSender {
      *
      * @param packet Đối tượng sự kiện phím hoặc chuột
      */
-    public void send(InputEventPacket packet) {
+    public synchronized void send(InputEventPacket packet) {
         if (packet == null || out == null) {
             return;
         }
@@ -37,6 +37,7 @@ public class EventSender {
             synchronized (out) {
                 PacketBuilder.write(out, PacketType.INPUT_EVENT, payload);
             }
+            PacketBuilder.write(out, PacketType.INPUT_EVENT, payload);
         } catch (IOException e) {
             System.err.println("[EventSender] Lỗi gửi sự kiện phím/chuột: " + e.getMessage());
         }
