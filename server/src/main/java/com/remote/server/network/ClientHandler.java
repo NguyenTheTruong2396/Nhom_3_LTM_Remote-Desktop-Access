@@ -39,6 +39,12 @@ public class ClientHandler implements Runnable {
     private final RobotEventReplayer robotReplayer;
     private VideoStreamSender videoStreamSender;
 
+
+    private java.io.FileOutputStream fileOutputStream;
+    private String receivingFileName;
+    private long receivingFileSize;
+    private long receivedBytes;
+
     public ClientHandler(Socket socket, SessionManager sessionManager) {
         this.clientSocket = socket;
         this.clientAddress = socket.getRemoteSocketAddress().toString();
@@ -149,6 +155,42 @@ public class ClientHandler implements Runnable {
                         }
                         break;
 
+
+                    case PacketType.FILE_META: {
+                        String payload = packet.payloadAsString();
+                        String[] parts = payload.split("\\|", 2);
+                        receivingFileName = parts.length > 0 ? parts[0] : "received_file";
+                        receivingFileSize = parts.length > 1 ? Long.parseLong(parts[1]) : 0;
+                        receivedBytes = 0;
+
+                        java.io.File downloadDir = new java.io.File("downloads");
+                        if (!downloadDir.exists()) downloadDir.mkdirs();
+
+                        java.io.File outputFile = new java.io.File(downloadDir, receivingFileName);
+                        fileOutputStream = new java.io.FileOutputStream(outputFile);
+                        System.out.println("[ClientHandler] Bắt đầu nhận file: " + receivingFileName + " (" + receivingFileSize + " bytes)");
+                        break;
+                    }
+
+                    case PacketType.FILE_CHUNK: {
+                        if (fileOutputStream != null) {
+                            byte[] chunk = packet.payload();
+                            fileOutputStream.write(chunk);
+                            receivedBytes += chunk.length;
+                        }
+                        break;
+                    }
+
+                    case PacketType.FILE_END: {
+                        if (fileOutputStream != null) {
+                            fileOutputStream.flush();
+                            fileOutputStream.close();
+                            fileOutputStream = null;
+                            System.out.println("[ClientHandler] HOÀN TẤT NHẬN FILE: downloads/" + receivingFileName + " (" + receivedBytes + " bytes)");
+                        }
+                        break;
+                    }
+
                     default:
                         System.out.println("[ClientHandler] Unhandled packet type: " + packet);
                         break;
@@ -168,6 +210,16 @@ public class ClientHandler implements Runnable {
             } catch (Exception e) {
                 System.err.println("[ClientHandler] Lỗi dừng video stream: " + e.getMessage());
             }
+        }
+
+
+        if (fileOutputStream != null) {
+            try {
+                fileOutputStream.flush();
+                fileOutputStream.close();
+                System.out.println("[ClientHandler] Đã đóng file do ngắt kết nối giữa chừng.");
+            } catch (IOException ignored) {}
+            fileOutputStream = null;
         }
 
         try {

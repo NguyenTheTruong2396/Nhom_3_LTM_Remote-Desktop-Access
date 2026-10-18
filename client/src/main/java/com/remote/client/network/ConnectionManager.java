@@ -64,6 +64,18 @@ public class ConnectionManager implements AutoCloseable {
         disconnect();
     }
 
+    public DataOutputStream getOutputStream() {
+        return outputStream;
+    }
+
+    public DataInputStream getInputStream() {
+        return inputStream;
+    }
+
+    public Socket getSocket() {
+        return socket;
+    }
+
     public void disconnect() {
         try {
             if (inputStream != null) inputStream.close();

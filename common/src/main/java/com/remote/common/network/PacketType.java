@@ -38,4 +38,15 @@ public final class PacketType {
 
     /** Bidirectional graceful disconnect signal, empty payload. */
     public static final byte DISCONNECT  = (byte) 0xFF;
+
+
+    /** Client → Server: Thông tin file sắp gửi ("fileName|fileSize") */
+    public static final byte FILE_META  = 0x07;
+
+    /** Client → Server: Khối dữ liệu file (8KB raw bytes) */
+    public static final byte FILE_CHUNK = 0x08;
+
+    /** Client → Server: Tín hiệu kết thúc truyền file */
+    public static final byte FILE_END   = 0x09;
+
 }
