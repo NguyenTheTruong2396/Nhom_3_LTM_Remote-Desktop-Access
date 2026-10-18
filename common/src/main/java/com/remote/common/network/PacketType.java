@@ -48,4 +48,5 @@ public final class PacketType {
 
     /** Client → Server: Tín hiệu kết thúc truyền file */
     public static final byte FILE_END   = 0x09;
+
 }

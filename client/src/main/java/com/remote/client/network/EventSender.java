@@ -33,11 +33,13 @@ public class EventSender {
 
         try {
             byte[] payload = packet.toBytes();
+
             // Dùng chung khóa synchronized trên đối tượng out để không đè byte với FileSender
             synchronized (out) {
                 PacketBuilder.write(out, PacketType.INPUT_EVENT, payload);
             }
-            PacketBuilder.write(out, PacketType.INPUT_EVENT, payload);
+
+           
         } catch (IOException e) {
             System.err.println("[EventSender] Lỗi gửi sự kiện phím/chuột: " + e.getMessage());
         }
