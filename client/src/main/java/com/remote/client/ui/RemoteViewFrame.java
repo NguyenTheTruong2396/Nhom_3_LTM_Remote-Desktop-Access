@@ -79,21 +79,53 @@ public class RemoteViewFrame extends JFrame {
         add(toolBar, BorderLayout.NORTH); // Đặt thanh công cụ ở mép trên cửa sổ
     }
 
+    private Runnable disconnectCallback;
+
+    public void setDisconnectCallback(Runnable disconnectCallback) {
+        this.disconnectCallback = disconnectCallback;
+    }
+
+    /**
+     * Cập nhật connection mới sau khi reconnect thành công.
+     */
+    public void updateConnection(ConnectionManager newConnection) {
+        if (newConnection != null && newConnection.getOutputStream() != null) {
+            this.screenPanel.setEventSender(new EventSender(newConnection.getOutputStream()));
+        }
+    }
+
     /**
      * Chạy luồng đọc gói tin FramePacket liên tục từ Server
      */
     public void startReceiving() {
         new Thread(() -> {
             try {
+                java.io.DataInputStream in = connectionManager.getInputStream();
                 while (connectionManager != null && connectionManager.isConnected()) {
-                    // Đọc gói tin ảnh màn hình từ DataInputStream (sử dụng hàm TLV của Dev 1)
-                    FramePacket frame = FramePacket.readFrom(connectionManager.getInputStream());
+                    com.remote.common.network.PacketParser.Packet packet = com.remote.common.network.PacketParser.read(in);
                     
-                    // Cập nhật giao diện
-                    updateScreen(frame);
+                    if (packet.type() == com.remote.common.network.PacketType.FRAME_DATA) {
+                        byte[] payload = packet.payload();
+                        if (payload.length >= 8) {
+                            java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(payload);
+                            long timestamp = bb.getLong();
+                            byte[] imgData = new byte[payload.length - 8];
+                            bb.get(imgData);
+                            FramePacket frame = new FramePacket(timestamp, imgData);
+                            updateScreen(frame);
+                        }
+                    } else if (packet.type() == com.remote.common.network.PacketType.PONG) {
+                        // Nhận gói phản hồi Keep-alive PONG từ Server, bỏ qua không xử lý
+                    } else if (packet.type() == com.remote.common.network.PacketType.DISCONNECT) {
+                        System.out.println("[RemoteViewFrame] Server đã ngắt kết nối.");
+                        break;
+                    }
                 }
             } catch (IOException e) {
                 System.err.println("[RemoteViewFrame] Mất kết nối luồng video: " + e.getMessage());
+                if (disconnectCallback != null) {
+                    disconnectCallback.run();
+                }
             }
         }, "Video-Receiver-Thread").start();
     }

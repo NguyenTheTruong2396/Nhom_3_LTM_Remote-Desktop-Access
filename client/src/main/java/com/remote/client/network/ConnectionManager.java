@@ -35,6 +35,39 @@ public class ConnectionManager implements AutoCloseable {
     }
 
     /**
+     * Thử kết nối lại với Server theo chu kỳ lặp lại sau mỗi intervalMs.
+     *
+     * @param maxAttempts số lần thử tối đa (-1 hoặc <= 0 để thử liên tục không giới hạn)
+     * @param intervalMs thời gian nghỉ giữa các lần thử (ms)
+     * @return true nếu kết nối lại thành công, false nếu đạt maxAttempts mà thất bại
+     */
+    public boolean reconnect(int maxAttempts, long intervalMs) {
+        disconnect(); // Đóng socket và stream cũ trước khi thử lại
+        int attempt = 0;
+
+        while (maxAttempts <= 0 || attempt < maxAttempts) {
+            attempt++;
+            try {
+                System.out.println("[ConnectionManager] Đang thử kết nối lại (Lần " + attempt + ") tới " + host + ":" + port + "...");
+                this.socket = new Socket(host, port);
+                this.inputStream = new DataInputStream(socket.getInputStream());
+                this.outputStream = new DataOutputStream(socket.getOutputStream());
+                System.out.println("[ConnectionManager] Kết nối lại THÀNH CÔNG tới " + host + ":" + port + "!");
+                return true;
+            } catch (IOException e) {
+                System.err.println("[ConnectionManager] Thử kết nối lại thất bại: " + e.getMessage());
+                try {
+                    Thread.sleep(intervalMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Sends a UTF string message to the server and awaits a UTF string response.
      *
      * @param message Message to send
