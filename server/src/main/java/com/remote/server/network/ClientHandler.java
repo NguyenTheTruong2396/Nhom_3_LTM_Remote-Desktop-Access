@@ -11,9 +11,12 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+
+import com.remote.common.network.NetworkConstants;
 
 import com.remote.server.nativeapi.JniBridge;
 import com.remote.server.nativeapi.NativeCapture;
@@ -128,6 +131,9 @@ public class ClientHandler implements Runnable {
         this.videoStreamSender = new VideoStreamSender(clientSocket, dos);
         this.videoStreamSender.start();
 
+        // Cài đặt timeout giám sát Heartbeat (10 giây không có packet -> ngắt kết nối)
+        clientSocket.setSoTimeout(NetworkConstants.HEARTBEAT_TIMEOUT_MS);
+
         while (!clientSocket.isClosed()) {
             try {
                 Packet packet = PacketParser.read(dis);
@@ -195,6 +201,10 @@ public class ClientHandler implements Runnable {
                         System.out.println("[ClientHandler] Unhandled packet type: " + packet);
                         break;
                 }
+            } catch (SocketTimeoutException e) {
+                System.err.println("[ClientHandler] Heartbeat TIMEOUT (" + (NetworkConstants.HEARTBEAT_TIMEOUT_MS / 1000)
+                        + "s) from " + clientAddress + ". Client considered disconnected.");
+                break;
             } catch (EOFException | SocketException e) {
                 System.out.println("[ClientHandler] Client disconnected during session: " + clientAddress);
                 break;
