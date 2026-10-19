@@ -6,6 +6,7 @@ import com.remote.client.network.FileSender;
 import com.remote.common.model.FramePacket;
 
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
 import java.awt.*;
 import java.io.File;
 import java.io.IOException;
@@ -36,12 +37,25 @@ public class RemoteViewFrame extends JFrame {
         this.screenPanel.setEventSender(this.eventSender);
 
         // =========================================================================
-        // >>> ĐOẠN CẬP NHẬT MỚI: Thêm Thanh công cụ (JToolBar) để Gửi File <<<
+        // >>> Thanh công cụ điều khiển cao cấp (Toolbar) <<<
         // =========================================================================
         JToolBar toolBar = new JToolBar();
-        toolBar.setFloatable(false); // Cố định thanh công cụ ở mép trên
+        toolBar.setFloatable(false);
+        toolBar.setBackground(new Color(245, 247, 250));
+        toolBar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(220, 224, 230)),
+                new EmptyBorder(6, 12, 6, 12)
+        ));
 
-        JButton btnSendFile = new JButton("📁 Gửi File sang Máy Host");
+        // 1. NÚT TRUYỀN FILE TO VÀ RÕ RÀNG
+        JButton btnSendFile = new JButton("📁 Truyền File Sang Máy Host");
+        btnSendFile.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        btnSendFile.setForeground(Color.WHITE);
+        btnSendFile.setBackground(new Color(0x1B, 0x75, 0xBC));
+        btnSendFile.setFocusPainted(false);
+        btnSendFile.setBorder(new EmptyBorder(8, 18, 8, 18));
+        btnSendFile.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
         btnSendFile.addActionListener(e -> {
             if (connectionManager == null || connectionManager.getOutputStream() == null) {
                 JOptionPane.showMessageDialog(this, "Chưa kết nối tới Server!", "Lỗi", JOptionPane.ERROR_MESSAGE);
@@ -52,7 +66,6 @@ public class RemoteViewFrame extends JFrame {
             if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 File selectedFile = fileChooser.getSelectedFile();
 
-                // Gọi FileSender gửi file qua DataOutputStream của Socket
                 FileSender.sendFile(selectedFile, connectionManager.getOutputStream(), new FileSender.FileProgressCallback() {
                     @Override
                     public void onProgress(int percentage, long bytesSent, long totalBytes) {
@@ -75,8 +88,55 @@ public class RemoteViewFrame extends JFrame {
             }
         });
 
+        // 2. NÚT NGẮT KẾT NỐI (DISCONNECT) NỔI BẬT
+        JButton btnDisconnect = new JButton("🔴 Ngắt Kết Nối");
+        btnDisconnect.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        btnDisconnect.setForeground(Color.WHITE);
+        btnDisconnect.setBackground(new Color(0xD9, 0x38, 0x3A));
+        btnDisconnect.setFocusPainted(false);
+        btnDisconnect.setBorder(new EmptyBorder(8, 18, 8, 18));
+        btnDisconnect.setCursor(new Cursor(Cursor.HAND_CURSOR));
+
+        btnDisconnect.addActionListener(e -> {
+            int opt = JOptionPane.showConfirmDialog(this, 
+                    "Bạn có chắc chắn muốn ngắt kết nối phiên điều khiển này?", 
+                    "Xác nhận ngắt kết nối", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+            if (opt == JOptionPane.YES_OPTION) {
+                disconnectAndExit();
+            }
+        });
+
         toolBar.add(btnSendFile);
-        add(toolBar, BorderLayout.NORTH); // Đặt thanh công cụ ở mép trên cửa sổ
+        toolBar.add(Box.createHorizontalStrut(14));
+        toolBar.add(btnDisconnect);
+        toolBar.add(Box.createHorizontalGlue());
+
+        add(toolBar, BorderLayout.NORTH);
+
+        // Đảm bảo ngắt kết nối khi người dùng bấm dấu X tắt cửa sổ
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                disconnectAndExit();
+            }
+        });
+    }
+
+    private void disconnectAndExit() {
+        try {
+            if (connectionManager != null && connectionManager.getOutputStream() != null) {
+                com.remote.common.network.PacketBuilder.writeEmpty(connectionManager.getOutputStream(), com.remote.common.network.PacketType.DISCONNECT);
+            }
+        } catch (Exception ignored) {}
+        if (connectionManager != null) {
+            connectionManager.close();
+        }
+        dispose();
+        // Mở lại cửa sổ đăng nhập Client
+        SwingUtilities.invokeLater(() -> {
+            ClientFrame frame = new ClientFrame();
+            frame.setVisible(true);
+        });
     }
 
     /**
