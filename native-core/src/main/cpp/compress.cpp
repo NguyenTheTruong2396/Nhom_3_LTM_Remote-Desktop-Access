@@ -2,7 +2,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "image.h"
 
-// Callback ghi byte nén trực tiếp vào RAM vector
+// Callback ghi byte nén trực tiếp vào RAM vector (đã được đệm 8KB từ STB)
 static void JpegMemoryCallback(void* context, void* data, int size) {
     auto* buffer = (std::vector<uint8_t>*)context;
     auto* bytes = (const uint8_t*)data;
@@ -10,31 +10,27 @@ static void JpegMemoryCallback(void* context, void* data, int size) {
 }
 
 bool CompressBgraToJpeg(const uint8_t* rawPixels, int width, int height,
-                        std::vector<uint8_t>& rgbaBuffer,
                         std::vector<uint8_t>& outputJpeg,
                         int quality) {
     if (!rawPixels || width <= 0 || height <= 0) {
         return false;
     }
 
-    size_t pixelCount = (size_t)width * height;
-    if (rgbaBuffer.size() < pixelCount * 4) {
-        rgbaBuffer.resize(pixelCount * 4);
+    // Đảm bảo outputJpeg đã được dự trữ sẵn dung lượng (512KB) tránh realloc
+    if (outputJpeg.capacity() < 512 * 1024) {
+        outputJpeg.reserve(512 * 1024);
     }
-
-    // 1. Chuyển đổi định dạng BGRA (Win32) -> RGBA (STB chuẩn)
-    for (size_t i = 0; i < pixelCount; ++i) {
-        rgbaBuffer[i * 4 + 0] = rawPixels[i * 4 + 2]; // R
-        rgbaBuffer[i * 4 + 1] = rawPixels[i * 4 + 1]; // G
-        rgbaBuffer[i * 4 + 2] = rawPixels[i * 4 + 0]; // B
-        rgbaBuffer[i * 4 + 3] = 255;                  // A
-    }
-
-    // 2. Xóa dữ liệu frame trước nhưng giữ nguyên bộ đệm đã cấp phát
     outputJpeg.clear();
 
-    // 3. Nén sang JPEG trực tiếp trong RAM
-    stbi_write_jpg_to_func(JpegMemoryCallback, &outputJpeg, width, height, 4, rgbaBuffer.data(), quality);
+    // Nén trực tiếp từ mảng BGRA sang JPEG (Zero-Copy, không cần chuyển màu qua RGBA)
+    stbi_write_jpg_to_func_bgra(JpegMemoryCallback, &outputJpeg, width, height, rawPixels, quality);
 
     return !outputJpeg.empty();
+}
+
+bool CompressBgraToJpeg(const uint8_t* rawPixels, int width, int height,
+                        std::vector<uint8_t>& /*rgbaBuffer*/,
+                        std::vector<uint8_t>& outputJpeg,
+                        int quality) {
+    return CompressBgraToJpeg(rawPixels, width, height, outputJpeg, quality);
 }

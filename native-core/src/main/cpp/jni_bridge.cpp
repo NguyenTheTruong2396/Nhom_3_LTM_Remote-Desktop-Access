@@ -4,9 +4,8 @@
 #include <mutex>
 #include <iostream>
 
-// Singleton quản lý capturer và bộ đệm trung gian tái sử dụng (Buffer Reuse)
+// Singleton quản lý capturer và bộ đệm JPEG tái sử dụng (Buffer Reuse)
 static ScreenCapturer* g_capturer = nullptr;
-static std::vector<uint8_t> g_rgbaBuffer;
 static std::vector<uint8_t> g_jpegBuffer;
 static std::mutex g_captureMutex;
 
@@ -20,11 +19,11 @@ JNIEXPORT jbyteArray JNICALL Java_com_remote_server_nativeapi_JniBridge_captureF
     // Khởi tạo ScreenCapturer một lần duy nhất
     if (!g_capturer) {
         g_capturer = new ScreenCapturer();
-        g_jpegBuffer.reserve(256 * 1024); // Đặt trước 256KB cho mỗi frame
+        g_jpegBuffer.reserve(512 * 1024); // Đặt trước 512KB cho mỗi frame
     }
 
-    // 1. Chụp màn hình bằng Windows GDI
-    if (!g_capturer->Capture()) {
+    // 1. Chụp màn hình bằng Windows GDI siêu tốc (SRCCOPY + Con trỏ chuột không lag)
+    if (!g_capturer->Capture(true)) {
         return nullptr;
     }
 
@@ -35,8 +34,8 @@ JNIEXPORT jbyteArray JNICALL Java_com_remote_server_nativeapi_JniBridge_captureF
         return nullptr;
     }
 
-    // 2. Nén định dạng sang JPEG trực tiếp trong RAM
-    if (!CompressBgraToJpeg(rawPixels, w, h, g_rgbaBuffer, g_jpegBuffer, quality)) {
+    // 2. Nén trực tiếp từ BGRA -> JPEG Zero-Copy trong RAM (Không cần qua mảng phụ RGBA)
+    if (!CompressBgraToJpeg(rawPixels, w, h, g_jpegBuffer, quality)) {
         return nullptr;
     }
 
