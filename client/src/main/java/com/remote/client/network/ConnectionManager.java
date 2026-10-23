@@ -109,6 +109,14 @@ public class ConnectionManager implements AutoCloseable {
         return socket;
     }
 
+    public String getHost() {
+        return host;
+    }
+
+    public int getPort() {
+        return port;
+    }
+
     public void disconnect() {
         try {
             if (inputStream != null) inputStream.close();

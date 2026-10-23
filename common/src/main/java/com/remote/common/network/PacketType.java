@@ -40,13 +40,27 @@ public final class PacketType {
     public static final byte DISCONNECT  = (byte) 0xFF;
 
 
-    /** Client → Server: Thông tin file sắp gửi ("fileName|fileSize") */
-    public static final byte FILE_META  = 0x07;
+    /** Client → Server / Server → Client: Thông tin file sắp gửi ("fileName|fileSize|checksum") */
+    public static final byte FILE_META         = 0x07;
 
-    /** Client → Server: Khối dữ liệu file (8KB raw bytes) */
-    public static final byte FILE_CHUNK = 0x08;
+    /** Client → Server / Server → Client: Khối dữ liệu file (8KB-32KB raw bytes) */
+    public static final byte FILE_CHUNK        = 0x08;
 
-    /** Client → Server: Tín hiệu kết thúc truyền file */
-    public static final byte FILE_END   = 0x09;
+    /** Client → Server / Server → Client: Tín hiệu kết thúc truyền file */
+    public static final byte FILE_END          = 0x09;
 
+    /** Client → Server: Yêu cầu danh sách file/thư mục ("remotePath") */
+    public static final byte DIR_REQ           = 0x0A;
+
+    /** Server → Client: Kết quả danh sách file/thư mục */
+    public static final byte DIR_RESP          = 0x0B;
+
+    /** Client → Server: Yêu cầu tải file từ Server về Client ("remoteFilePath") */
+    public static final byte FILE_DOWNLOAD_REQ = 0x0C;
+
+    /** Hai chiều: Tín hiệu hủy truyền file ngang */
+    public static final byte FILE_CANCEL       = 0x0E;
+
+    /** Hai chiều: Đồng bộ nội dung văn bản Clipboard */
+    public static final byte CLIPBOARD_SYNC    = 0x10;
 }
