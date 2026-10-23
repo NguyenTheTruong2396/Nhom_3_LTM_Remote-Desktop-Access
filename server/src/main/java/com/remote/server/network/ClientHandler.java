@@ -57,11 +57,7 @@ public class ClientHandler implements Runnable {
 
     @Override
     public void run() {
-        try {
-            clientSocket.setTcpNoDelay(true);
-            clientSocket.setSendBufferSize(256 * 1024);
-            clientSocket.setReceiveBufferSize(256 * 1024);
-        } catch (Exception ignored) {}
+        System.out.println("[ClientHandler] Client connected from: " + clientAddress);
 
         try (
             DataInputStream  dis = new DataInputStream(clientSocket.getInputStream());

@@ -29,11 +29,6 @@ public class ConnectionManager implements AutoCloseable {
     public void connect() throws IOException {
         System.out.println("[ConnectionManager] Connecting to server at " + host + ":" + port + "...");
         this.socket = new Socket(host, port);
-        try {
-            this.socket.setTcpNoDelay(true);
-            this.socket.setSendBufferSize(256 * 1024);
-            this.socket.setReceiveBufferSize(256 * 1024);
-        } catch (Exception ignored) {}
         this.inputStream = new DataInputStream(socket.getInputStream());
         this.outputStream = new DataOutputStream(socket.getOutputStream());
         System.out.println("[ConnectionManager] Successfully connected to server at " + host + ":" + port);
@@ -55,11 +50,6 @@ public class ConnectionManager implements AutoCloseable {
             try {
                 System.out.println("[ConnectionManager] Đang thử kết nối lại (Lần " + attempt + ") tới " + host + ":" + port + "...");
                 this.socket = new Socket(host, port);
-                try {
-                    this.socket.setTcpNoDelay(true);
-                    this.socket.setSendBufferSize(256 * 1024);
-                    this.socket.setReceiveBufferSize(256 * 1024);
-                } catch (Exception ignored) {}
                 this.inputStream = new DataInputStream(socket.getInputStream());
                 this.outputStream = new DataOutputStream(socket.getOutputStream());
                 System.out.println("[ConnectionManager] Kết nối lại THÀNH CÔNG tới " + host + ":" + port + "!");
