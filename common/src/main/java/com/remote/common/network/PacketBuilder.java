@@ -110,4 +110,32 @@ public final class PacketBuilder {
     public static void writeFrameData(DataOutputStream out, byte[] jpegBytes) throws IOException {
         writeFrameData(out, System.currentTimeMillis(), jpegBytes);
     }
+
+    // ---- Phase 5: Video Channel Handshake helpers ----------------------------
+
+    /**
+     * Writes a VIDEO_HANDSHAKE_REQ packet.
+     * Payload format: "sessionId|streamToken" (UTF-8).
+     *
+     * @param out         output stream (Video Channel)
+     * @param sessionId   session ID obtained from Control Channel auth
+     * @param streamToken one-time stream token received in AUTH_RESP payload
+     * @throws IOException if an I/O error occurs
+     */
+    public static void writeVideoHandshakeRequest(DataOutputStream out, String sessionId, String streamToken)
+            throws IOException {
+        writeText(out, PacketType.VIDEO_HANDSHAKE_REQ, sessionId + "|" + streamToken);
+    }
+
+    /**
+     * Writes a VIDEO_HANDSHAKE_RESP packet.
+     * Payload: 1 byte — 1 = paired successfully, 0 = token invalid/expired.
+     *
+     * @param out     output stream (Video Channel, server side)
+     * @param success {@code true} → 1 (paired), {@code false} → 0 (rejected)
+     * @throws IOException if an I/O error occurs
+     */
+    public static void writeVideoHandshakeResponse(DataOutputStream out, boolean success) throws IOException {
+        write(out, PacketType.VIDEO_HANDSHAKE_RESP, new byte[]{(byte) (success ? 1 : 0)});
+    }
 }
