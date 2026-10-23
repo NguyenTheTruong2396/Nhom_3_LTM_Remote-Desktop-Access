@@ -38,7 +38,7 @@ public class VideoStreamSender implements Runnable {
     private Thread streamThread;
 
     // Cấu hình truyền phát
-    private int targetFps = 60; // Mặc định 60 FPS (hỗ trợ tối đa 120 FPS)
+    private int targetFps = 30;
     private int quality = 60; // Mức chất lượng JPEG (1 - 100)
 
     // Dự phòng Java AWT Robot khi native DLL chưa nạp
@@ -128,7 +128,7 @@ public class VideoStreamSender implements Runnable {
     }
 
     public void setTargetFps(int targetFps) {
-        this.targetFps = Math.max(1, Math.min(120, targetFps));
+        this.targetFps = Math.max(1, Math.min(60, targetFps));
     }
 
     public void setQuality(int quality) {
