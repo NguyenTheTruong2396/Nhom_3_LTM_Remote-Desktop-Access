@@ -34,13 +34,26 @@ import com.remote.server.control.RobotEventReplayer;
  *   4. On success: invoke post-auth hook (screen frame send will be wired here in Week 2 Step 6).
  *   5. Loop: continue reading packets until DISCONNECT or EOF.
  */
+/**
+ * Phase 5: Handles one Control Channel TCP connection.
+ *
+ * Responsibilities:
+ *   - AUTH handshake: validates credentials, issues a stream token, and
+ *     returns it in the AUTH_RESP payload ("OK|streamToken").
+ *   - Post-auth loop: input events, heartbeat PING/PONG, file transfer,
+ *     clipboard sync, graceful DISCONNECT.
+ *
+ * Video streaming is now handled exclusively by {@link VideoChannelHandler}
+ * on the separate Video Channel (port 5001) after successful token pairing.
+ */
 public class ClientHandler implements Runnable {
 
     private final Socket clientSocket;
     private final String clientAddress;
     private final SessionManager sessionManager;
     private final RobotEventReplayer robotReplayer;
-    private VideoStreamSender videoStreamSender;
+    // NOTE: VideoStreamSender is no longer started here (Phase 5).
+    //       It runs on VideoChannelHandler after stream-token pairing.
 
 
     private java.io.FileOutputStream fileOutputStream;
@@ -74,8 +87,8 @@ public class ClientHandler implements Runnable {
             DataOutputStream dos = new DataOutputStream(clientSocket.getOutputStream())
         ) {
             // --- AUTH handshake (TLV) ---
-            boolean authenticated = handleAuth(dis, dos);
-            if (!authenticated) {
+            String sessionId = handleAuth(dis, dos);
+            if (sessionId == null) {
                 System.out.println("[ClientHandler] Auth failed, closing connection: " + clientAddress);
                 return;
             }
@@ -99,15 +112,19 @@ public class ClientHandler implements Runnable {
     /**
      * Reads the AUTH_REQ packet, verifies credentials, and sends AUTH_RESP.
      *
-     * @return {@code true} if authentication succeeded
+     * Phase 5 change: on success the AUTH_RESP payload carries the stream token
+     * that the client must present when opening the Video Channel.
+     * Payload format: "OK|streamToken" (success) or "FAIL" (failure).
+     *
+     * @return the authenticated sessionId on success, {@code null} on failure
      */
-    private boolean handleAuth(DataInputStream dis, DataOutputStream dos) throws IOException {
+    private String handleAuth(DataInputStream dis, DataOutputStream dos) throws IOException {
         Packet packet = PacketParser.read(dis);
 
         if (packet.type() != PacketType.AUTH_REQ) {
             System.err.println("[ClientHandler] Expected AUTH_REQ (0x01) but got: " + packet);
-            PacketBuilder.writeAuthResponse(dos, false);
-            return false;
+            PacketBuilder.writeText(dos, PacketType.AUTH_RESP, "FAIL");
+            return null;
         }
 
         // Payload format: "sessionId|passcode"
@@ -120,14 +137,19 @@ public class ClientHandler implements Runnable {
                 + " from " + clientAddress);
 
         boolean ok = sessionManager.authenticate(sessionId, passcode);
-        PacketBuilder.writeAuthResponse(dos, ok);
 
         if (ok) {
-            System.out.println("[ClientHandler] Auth SUCCESS for sessionId=" + sessionId);
+            // Generate a one-time stream token and return it to the client
+            String streamToken = sessionManager.generateStreamToken(sessionId);
+            PacketBuilder.writeText(dos, PacketType.AUTH_RESP, "OK|" + streamToken);
+            System.out.println("[ClientHandler] Auth SUCCESS for sessionId=" + sessionId
+                    + ", stream token issued.");
+            return sessionId;
         } else {
+            PacketBuilder.writeText(dos, PacketType.AUTH_RESP, "FAIL");
             System.out.println("[ClientHandler] Auth FAILED  for sessionId=" + sessionId);
+            return null;
         }
-        return ok;
     }
 
     /**
@@ -135,11 +157,12 @@ public class ClientHandler implements Runnable {
      * Starts continuous video stream and processes incoming packets (including input events).
      */
      private void onAuthenticated(DataInputStream dis, DataOutputStream dos) throws IOException {
-        System.out.println("[ClientHandler] Session established, starting video stream: " + clientAddress);
+        System.out.println("[ClientHandler] Control session established for: " + clientAddress
+                + " — awaiting Video Channel pairing on port "
+                + sessionManager.getVideoPort());
 
-        // Khởi động luồng phát video liên tục 30 FPS tới Client
-        this.videoStreamSender = new VideoStreamSender(clientSocket, dos);
-        this.videoStreamSender.start();
+        // Phase 5: VideoStreamSender no longer starts here.
+        // It is launched by VideoChannelHandler once the client pairs the video socket.
 
         // Khởi động luồng giám sát Clipboard máy Server để đồng bộ sang Client
         startServerClipboardMonitor(dos);
@@ -456,15 +479,7 @@ public class ClientHandler implements Runnable {
     }
 
     private void closeSocket() {
-        // Dừng luồng phát video để tránh zombie thread và memory leak
-        if (videoStreamSender != null) {
-            try {
-                videoStreamSender.stop();
-            } catch (Exception e) {
-                System.err.println("[ClientHandler] Lỗi dừng video stream: " + e.getMessage());
-            }
-        }
-
+        // Phase 5: VideoStreamSender lifecycle is managed by VideoChannelHandler.
         downloadCancelled = true;
         uploadCancelled = true;
 

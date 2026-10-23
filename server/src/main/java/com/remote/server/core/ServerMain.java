@@ -1,5 +1,6 @@
 package com.remote.server.core;
 
+import com.remote.common.network.NetworkConstants;
 import com.remote.server.nativeapi.JniBridge;
 import com.remote.server.network.SessionManager;
 
@@ -8,19 +9,22 @@ import com.remote.server.network.SessionManager;
  */
 public class ServerMain {
 
-    private static final int DEFAULT_PORT = 8888;
+    // Phase 5: default ports are managed via NetworkConstants (5002/5001).
 
     public static void main(String[] args) {
         System.out.println("=========================================");
-        System.out.println("   Remote Desktop Server - Phase 1");
+        System.out.println("   Remote Desktop Server - Phase 5");
+        System.out.println("   Dual-Socket: Control(:5002) + Video(:5001)");
         System.out.println("=========================================");
 
-        int port = DEFAULT_PORT;
+        // Phase 5: Control port comes from NetworkConstants; Video port is always 5001.
+        int controlPort = NetworkConstants.DEFAULT_CONTROL_PORT;
         if (args.length > 0) {
             try {
-                port = Integer.parseInt(args[0]);
+                controlPort = Integer.parseInt(args[0]);
             } catch (NumberFormatException e) {
-                System.out.println("[ServerMain] Invalid port provided, using default: " + DEFAULT_PORT);
+                System.out.println("[ServerMain] Invalid port provided, using default: "
+                        + NetworkConstants.DEFAULT_CONTROL_PORT);
             }
         }
 
@@ -34,8 +38,9 @@ public class ServerMain {
         }
 
         // Start TCP Server
-        System.out.println("[ServerMain] Starting TCP Server on port " + port + "...");
-        SessionManager sessionManager = new SessionManager(port);
+        System.out.println("[ServerMain] Starting TCP Server — Control:" + controlPort
+                + ", Video:" + NetworkConstants.DEFAULT_VIDEO_PORT + "...");
+        SessionManager sessionManager = new SessionManager(controlPort);
 
         // Generate and display the initial session credentials
         SessionManager.SessionInfo sessionInfo = sessionManager.createSession();

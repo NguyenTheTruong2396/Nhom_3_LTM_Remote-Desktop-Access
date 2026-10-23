@@ -1,58 +1,175 @@
 package com.remote.client.network;
 
+import com.remote.common.network.NetworkConstants;
+
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.net.Socket;
 
 /**
- * Manages TCP connection from Client to Server.
+ * Phase 5 — Dual-Socket Connection Manager.
+ *
+ * Manages two independent TCP connections to the server:
+ *   - <b>Control Socket</b> ({@value NetworkConstants#DEFAULT_CONTROL_PORT}):
+ *     Used for authentication, input events, heartbeat, file transfer, and
+ *     clipboard sync.  Low-latency; {@code TCP_NODELAY=true}.
+ *   - <b>Video Socket</b> ({@value NetworkConstants#DEFAULT_VIDEO_PORT}):
+ *     Used exclusively for receiving FRAME_DATA packets.  Large receive buffer;
+ *     opened after successful authentication and stream-token exchange.
+ *
+ * Typical usage:
+ * <pre>
+ *   ConnectionManager cm = new ConnectionManager(host);
+ *   cm.connectControl();
+ *   // ... authenticate, receive stream token ...
+ *   cm.connectVideo(sessionId, streamToken);
+ * </pre>
  */
 public class ConnectionManager implements AutoCloseable {
 
     private final String host;
-    private final int port;
-    private Socket socket;
-    private DataInputStream inputStream;
-    private DataOutputStream outputStream;
+    private final int controlPort;
+    private final int videoPort;
 
-    public ConnectionManager(String host, int port) {
-        this.host = host;
-        this.port = port;
+    // Control channel
+    private Socket         controlSocket;
+    private DataInputStream  controlInputStream;
+    private DataOutputStream controlOutputStream;
+
+    // Video channel
+    private Socket         videoSocket;
+    private DataInputStream  videoInputStream;
+
+    // -------------------------------------------------------------------------
+
+    /**
+     * Creates a ConnectionManager using the default ports from
+     * {@link NetworkConstants}.
+     *
+     * @param host server host name or IP
+     */
+    public ConnectionManager(String host) {
+        this(host, NetworkConstants.DEFAULT_CONTROL_PORT, NetworkConstants.DEFAULT_VIDEO_PORT);
     }
 
     /**
-     * Establishes TCP connection to the server.
+     * Creates a ConnectionManager with explicit port numbers.
+     *
+     * @param host        server host name or IP
+     * @param controlPort port for the Control Channel
+     * @param videoPort   port for the Video Channel
+     */
+    public ConnectionManager(String host, int controlPort, int videoPort) {
+        this.host        = host;
+        this.controlPort = controlPort;
+        this.videoPort   = videoPort;
+    }
+
+    /**
+     * Legacy single-port constructor kept for backward compatibility.
+     * Maps the given port to the control channel; video port defaults to
+     * {@link NetworkConstants#DEFAULT_VIDEO_PORT}.
+     *
+     * @param host server host name or IP
+     * @param port control channel port (previously "default port")
+     * @deprecated Use {@link #ConnectionManager(String)} or
+     *             {@link #ConnectionManager(String, int, int)} instead.
+     */
+    @Deprecated
+    public ConnectionManager(String host, int port) {
+        this(host, port, NetworkConstants.DEFAULT_VIDEO_PORT);
+    }
+
+    // ---- Control Channel -----------------------------------------------------
+
+    /**
+     * Establishes a TCP connection to the server's Control Channel.
      *
      * @throws IOException if connection fails
      */
-    public void connect() throws IOException {
-        System.out.println("[ConnectionManager] Connecting to server at " + host + ":" + port + "...");
-        this.socket = new Socket(host, port);
-        this.inputStream = new DataInputStream(socket.getInputStream());
-        this.outputStream = new DataOutputStream(socket.getOutputStream());
-        System.out.println("[ConnectionManager] Successfully connected to server at " + host + ":" + port);
+    public void connectControl() throws IOException {
+        System.out.println("[ConnectionManager] Connecting CONTROL channel to "
+                + host + ":" + controlPort + "...");
+        controlSocket = new Socket(host, controlPort);
+        controlSocket.setTcpNoDelay(true);
+        controlInputStream  = new DataInputStream(controlSocket.getInputStream());
+        controlOutputStream = new DataOutputStream(controlSocket.getOutputStream());
+        System.out.println("[ConnectionManager] CONTROL channel connected.");
     }
 
     /**
-     * Thử kết nối lại với Server theo chu kỳ lặp lại sau mỗi intervalMs.
+     * Legacy alias for {@link #connectControl()}.
      *
-     * @param maxAttempts số lần thử tối đa (-1 hoặc <= 0 để thử liên tục không giới hạn)
-     * @param intervalMs thời gian nghỉ giữa các lần thử (ms)
-     * @return true nếu kết nối lại thành công, false nếu đạt maxAttempts mà thất bại
+     * @throws IOException if connection fails
+     * @deprecated Use {@link #connectControl()} explicitly.
+     */
+    @Deprecated
+    public void connect() throws IOException {
+        connectControl();
+    }
+
+    // ---- Video Channel -------------------------------------------------------
+
+    /**
+     * Opens the Video Channel socket and performs the VIDEO_HANDSHAKE_REQ pairing.
+     * Must be called after a successful {@link #connectControl()} + authentication.
+     *
+     * @param sessionId   the authenticated session ID
+     * @param streamToken the one-time token received in the AUTH_RESP payload
+     * @throws IOException if the connection or handshake fails
+     * @throws SecurityException if the server rejects the stream token
+     */
+    public void connectVideo(String sessionId, String streamToken) throws IOException {
+        System.out.println("[ConnectionManager] Connecting VIDEO channel to "
+                + host + ":" + videoPort + "...");
+        videoSocket = new Socket(host, videoPort);
+        videoSocket.setTcpNoDelay(true);
+        videoSocket.setReceiveBufferSize(512 * 1024);
+        videoInputStream = new DataInputStream(videoSocket.getInputStream());
+
+        // Send VIDEO_HANDSHAKE_REQ
+        DataOutputStream videoOut = new DataOutputStream(videoSocket.getOutputStream());
+        com.remote.common.network.PacketBuilder.writeVideoHandshakeRequest(videoOut, sessionId, streamToken);
+        System.out.println("[ConnectionManager] VIDEO_HANDSHAKE_REQ sent for session=" + sessionId);
+
+        // Read VIDEO_HANDSHAKE_RESP
+        com.remote.common.network.PacketParser.Packet resp =
+                com.remote.common.network.PacketParser.read(videoInputStream);
+        if (resp.type() != com.remote.common.network.PacketType.VIDEO_HANDSHAKE_RESP) {
+            videoSocket.close();
+            throw new IOException("[ConnectionManager] Unexpected response type on video channel: 0x"
+                    + Integer.toHexString(resp.type() & 0xFF));
+        }
+        boolean accepted = resp.payload().length > 0 && resp.payload()[0] == 1;
+        if (!accepted) {
+            videoSocket.close();
+            throw new SecurityException("[ConnectionManager] Server rejected stream token — handshake FAILED.");
+        }
+        System.out.println("[ConnectionManager] VIDEO channel paired successfully.");
+    }
+
+    // ---- Reconnect -----------------------------------------------------------
+
+    /**
+     * Reconnects the Control Channel with retry logic.
+     *
+     * @param maxAttempts số lần thử tối đa (-1 hoặc &lt;= 0 để thử liên tục)
+     * @param intervalMs  thời gian nghỉ giữa các lần thử (ms)
+     * @return true nếu kết nối lại thành công
      */
     public boolean reconnect(int maxAttempts, long intervalMs) {
-        disconnect(); // Đóng socket và stream cũ trước khi thử lại
+        disconnectControl();
         int attempt = 0;
 
         while (maxAttempts <= 0 || attempt < maxAttempts) {
             attempt++;
             try {
-                System.out.println("[ConnectionManager] Đang thử kết nối lại (Lần " + attempt + ") tới " + host + ":" + port + "...");
-                this.socket = new Socket(host, port);
-                this.inputStream = new DataInputStream(socket.getInputStream());
-                this.outputStream = new DataOutputStream(socket.getOutputStream());
-                System.out.println("[ConnectionManager] Kết nối lại THÀNH CÔNG tới " + host + ":" + port + "!");
+                System.out.println("[ConnectionManager] Đang thử kết nối lại (Lần " + attempt
+                        + ") tới " + host + ":" + controlPort + "...");
+                connectControl();
+                System.out.println("[ConnectionManager] Kết nối lại THÀNH CÔNG tới "
+                        + host + ":" + controlPort + "!");
                 return true;
             } catch (IOException e) {
                 System.err.println("[ConnectionManager] Thử kết nối lại thất bại: " + e.getMessage());
@@ -67,29 +184,86 @@ public class ConnectionManager implements AutoCloseable {
         return false;
     }
 
+    // ---- Accessors -----------------------------------------------------------
+
+    /** Control channel output stream — used for sending events, pings, etc. */
+    public DataOutputStream getControlOutputStream() { return controlOutputStream; }
+
+    /** Control channel input stream — used for reading PONG, DIR_RESP, FILE_*, CLIPBOARD_SYNC. */
+    public DataInputStream getControlInputStream()  { return controlInputStream; }
+
+    /** Video channel input stream — used exclusively for reading FRAME_DATA. */
+    public DataInputStream getVideoInputStream()    { return videoInputStream; }
+
+    /** Control channel socket. */
+    public Socket getControlSocket()  { return controlSocket; }
+
+    /** Video channel socket. */
+    public Socket getVideoSocket()    { return videoSocket; }
+
     /**
-     * Sends a UTF string message to the server and awaits a UTF string response.
-     *
-     * @param message Message to send
-     * @return Response string from server
-     * @throws IOException if network error occurs
+     * @deprecated Use {@link #getControlOutputStream()}.
      */
-    public String sendAndReceive(String message) throws IOException {
-        if (!isConnected()) {
-            throw new IOException("Socket is not connected.");
-        }
+    @Deprecated
+    public DataOutputStream getOutputStream() { return controlOutputStream; }
 
-        System.out.println("[ConnectionManager] Sending to server: " + message);
-        outputStream.writeUTF(message);
-        outputStream.flush();
+    /**
+     * @deprecated Use {@link #getControlInputStream()}.
+     */
+    @Deprecated
+    public DataInputStream getInputStream() { return controlInputStream; }
 
-        String response = inputStream.readUTF();
-        System.out.println("[ConnectionManager] Received from server: " + response);
-        return response;
+    /**
+     * @deprecated Use {@link #getControlSocket()}.
+     */
+    @Deprecated
+    public Socket getSocket() { return controlSocket; }
+
+    public String getHost()       { return host; }
+    public int    getControlPort() { return controlPort; }
+    public int    getVideoPort()   { return videoPort; }
+
+    /** @deprecated Use {@link #getControlPort()}. */
+    @Deprecated
+    public int getPort() { return controlPort; }
+
+    // ---- State ---------------------------------------------------------------
+
+    public boolean isControlConnected() {
+        return controlSocket != null && controlSocket.isConnected() && !controlSocket.isClosed();
     }
 
-    public boolean isConnected() {
-        return socket != null && socket.isConnected() && !socket.isClosed();
+    public boolean isVideoConnected() {
+        return videoSocket != null && videoSocket.isConnected() && !videoSocket.isClosed();
+    }
+
+    /** @deprecated Use {@link #isControlConnected()}. */
+    @Deprecated
+    public boolean isConnected() { return isControlConnected(); }
+
+    // ---- Cleanup -------------------------------------------------------------
+
+    public void disconnectControl() {
+        closeQuietly(controlInputStream);
+        closeQuietly(controlOutputStream);
+        closeQuietly(controlSocket);
+        controlInputStream  = null;
+        controlOutputStream = null;
+        controlSocket       = null;
+        System.out.println("[ConnectionManager] Control channel disconnected.");
+    }
+
+    public void disconnectVideo() {
+        closeQuietly(videoInputStream);
+        closeQuietly(videoSocket);
+        videoInputStream = null;
+        videoSocket      = null;
+        System.out.println("[ConnectionManager] Video channel disconnected.");
+    }
+
+    public void disconnect() {
+        disconnectVideo();
+        disconnectControl();
     }
 
     @Override
@@ -97,34 +271,32 @@ public class ConnectionManager implements AutoCloseable {
         disconnect();
     }
 
-    public DataOutputStream getOutputStream() {
-        return outputStream;
-    }
-
-    public DataInputStream getInputStream() {
-        return inputStream;
-    }
-
-    public Socket getSocket() {
-        return socket;
-    }
-
-    public String getHost() {
-        return host;
-    }
-
-    public int getPort() {
-        return port;
-    }
-
-    public void disconnect() {
-        try {
-            if (inputStream != null) inputStream.close();
-            if (outputStream != null) outputStream.close();
-            if (socket != null && !socket.isClosed()) socket.close();
-            System.out.println("[ConnectionManager] Disconnected from server.");
-        } catch (IOException e) {
-            System.err.println("[ConnectionManager] Error while disconnecting: " + e.getMessage());
+    private static void closeQuietly(AutoCloseable c) {
+        if (c != null) {
+            try { c.close(); } catch (Exception ignored) {}
         }
+    }
+
+    // ---- Legacy sendAndReceive (kept for compatibility) ----------------------
+
+    /**
+     * Sends a UTF string message to the server on the control channel and awaits a UTF response.
+     *
+     * @param message Message to send
+     * @return Response string from server
+     * @throws IOException if network error occurs
+     * @deprecated Low-level helper retained for backward compatibility only.
+     */
+    @Deprecated
+    public String sendAndReceive(String message) throws IOException {
+        if (!isControlConnected()) {
+            throw new IOException("Control socket is not connected.");
+        }
+        System.out.println("[ConnectionManager] Sending to server: " + message);
+        controlOutputStream.writeUTF(message);
+        controlOutputStream.flush();
+        String response = controlInputStream.readUTF();
+        System.out.println("[ConnectionManager] Received from server: " + response);
+        return response;
     }
 }

@@ -63,4 +63,19 @@ public final class PacketType {
 
     /** Hai chiều: Đồng bộ nội dung văn bản Clipboard */
     public static final byte CLIPBOARD_SYNC    = 0x10;
+
+    // ---- Video Channel Handshake (Phase 5) -----------------------------------
+
+    /**
+     * Client → Server (Video Channel): Video handshake request.
+     * Payload format: "sessionId|streamToken" (UTF-8).
+     * Sent on the second connection (port 5001) immediately after TCP connect.
+     */
+    public static final byte VIDEO_HANDSHAKE_REQ  = 0x20;
+
+    /**
+     * Server → Client (Video Channel): Video handshake response.
+     * Payload: 1 byte — 1 = paired successfully, 0 = token invalid/expired.
+     */
+    public static final byte VIDEO_HANDSHAKE_RESP = 0x21;
 }

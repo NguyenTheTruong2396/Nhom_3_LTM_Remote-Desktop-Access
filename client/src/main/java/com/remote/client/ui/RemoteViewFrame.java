@@ -55,6 +55,12 @@ public class RemoteViewFrame extends JFrame {
     private Runnable onDisconnectCallback;
     private Runnable disconnectCallback;
 
+    // Guard against duplicate receiver threads on reconnect
+    private volatile boolean receiverRunning = false;
+    // Guard against duplicate disconnect callbacks (Video + Control both fire on drop)
+    private final java.util.concurrent.atomic.AtomicBoolean disconnectFired =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
     // Quản lý truyền file & clipboard sync
     private FileTransferService fileTransferService;
     private FileTransferDialog fileTransferDialog;
@@ -70,7 +76,7 @@ public class RemoteViewFrame extends JFrame {
         this.onDisconnectCallback = onDisconnectCallback;
 
         String serverAddr = (connectionManager != null && connectionManager.getHost() != null)
-                ? connectionManager.getHost() + ":" + connectionManager.getPort()
+                ? connectionManager.getHost() + ":" + connectionManager.getControlPort()
                 : "Host";
 
         setTitle("HKTNP Remote Desktop - Phiên điều khiển [" + serverAddr + "]");
@@ -83,9 +89,10 @@ public class RemoteViewFrame extends JFrame {
         screenPanel = new ScreenPanel();
         add(screenPanel, BorderLayout.CENTER);
 
-        if (connectionManager != null && connectionManager.getOutputStream() != null) {
-            this.eventSender = new EventSender(connectionManager.getOutputStream());
-            this.fileTransferService = new FileTransferService(connectionManager.getOutputStream());
+        // Phase 5: all sends go through control output stream
+        if (connectionManager != null && connectionManager.getControlOutputStream() != null) {
+            this.eventSender = new EventSender(connectionManager.getControlOutputStream());
+            this.fileTransferService = new FileTransferService(connectionManager.getControlOutputStream());
             startClientClipboardMonitor();
         } else {
             this.eventSender = null;
@@ -378,17 +385,17 @@ public class RemoteViewFrame extends JFrame {
     private void startClientClipboardMonitor() {
         clientClipboardMonitorThread = new Thread(() -> {
             String lastText = "";
-            while (connectionManager != null && connectionManager.isConnected()) {
+            while (connectionManager != null && connectionManager.isControlConnected()) {
                 try {
                     Thread.sleep(800);
-                    if (!isSettingClientClipboard && connectionManager.getOutputStream() != null) {
+                    if (!isSettingClientClipboard && connectionManager.getControlOutputStream() != null) {
                         Clipboard clip = Toolkit.getDefaultToolkit().getSystemClipboard();
                         if (clip.isDataFlavorAvailable(DataFlavor.stringFlavor)) {
                             String current = (String) clip.getData(DataFlavor.stringFlavor);
                             if (current != null && !current.isEmpty() && !current.equals(lastText)) {
                                 lastText = current;
-                                synchronized (connectionManager.getOutputStream()) {
-                                    PacketBuilder.write(connectionManager.getOutputStream(), PacketType.CLIPBOARD_SYNC,
+                                synchronized (connectionManager.getControlOutputStream()) {
+                                    PacketBuilder.write(connectionManager.getControlOutputStream(), PacketType.CLIPBOARD_SYNC,
                                             current.getBytes(StandardCharsets.UTF_8));
                                 }
                                 System.out.println("[RemoteViewFrame] Đã tự động đẩy Clipboard mới sang Server.");
@@ -422,8 +429,8 @@ public class RemoteViewFrame extends JFrame {
         }
 
         try {
-            if (connectionManager != null && connectionManager.getOutputStream() != null) {
-                PacketBuilder.writeEmpty(connectionManager.getOutputStream(), PacketType.DISCONNECT);
+            if (connectionManager != null && connectionManager.getControlOutputStream() != null) {
+                PacketBuilder.writeEmpty(connectionManager.getControlOutputStream(), PacketType.DISCONNECT);
             }
         } catch (Exception ignored) {}
 
@@ -445,14 +452,15 @@ public class RemoteViewFrame extends JFrame {
 
     private void startPingScheduler() {
         pingTimer = new Timer(1500, e -> {
-            if (connectionManager != null && connectionManager.isConnected()) {
+            if (connectionManager != null && connectionManager.isControlConnected()) {
                 try {
                     long now = System.currentTimeMillis();
                     lastPingSentTime = now;
                     ByteBuffer bb = ByteBuffer.allocate(8);
                     bb.putLong(now);
-                    synchronized (connectionManager.getOutputStream()) {
-                        PacketBuilder.write(connectionManager.getOutputStream(), PacketType.PING, bb.array());
+                    // PING is a control-channel packet
+                    synchronized (connectionManager.getControlOutputStream()) {
+                        PacketBuilder.write(connectionManager.getControlOutputStream(), PacketType.PING, bb.array());
                     }
                 } catch (Exception ignored) {}
             }
@@ -502,17 +510,43 @@ public class RemoteViewFrame extends JFrame {
     }
 
     public void updateConnection(ConnectionManager newConnection) {
-        if (newConnection != null && newConnection.getOutputStream() != null) {
-            this.screenPanel.setEventSender(new EventSender(newConnection.getOutputStream()));
+        if (newConnection != null && newConnection.getControlOutputStream() != null) {
+            this.screenPanel.setEventSender(new EventSender(newConnection.getControlOutputStream()));
         }
     }
 
+    /**
+     * Phase 5 — Starts two independent receiver threads:
+     *  1. {@code VideoReceiverThread}: reads FRAME_DATA from the video channel.
+     *  2. {@code ControlReceiverThread}: reads PONG, DIR_RESP, FILE_*, CLIPBOARD_SYNC,
+     *     DISCONNECT from the control channel.
+     */
     public void startReceiving() {
+        if (receiverRunning) {
+            System.out.println("[RemoteViewFrame] Receiver threads already running, skipping duplicate start.");
+            return;
+        }
+        receiverRunning = true;
+        disconnectFired.set(false); // reset for fresh start / reconnect
+        startVideoReceiver();
+        startControlReceiver();
+    }
+
+    /**
+     * Reads FRAME_DATA packets from the Video Channel input stream.
+     * Falls back to control stream if video stream is not yet available (legacy mode).
+     */
+    private void startVideoReceiver() {
         new Thread(() -> {
             try {
-                DataInputStream in = connectionManager.getInputStream();
-                while (connectionManager != null && connectionManager.isConnected()) {
-                    PacketParser.Packet packet = PacketParser.read(in);
+                // Use dedicated video stream if available, otherwise fall back to control
+                DataInputStream videoIn = (connectionManager != null && connectionManager.getVideoInputStream() != null)
+                        ? connectionManager.getVideoInputStream()
+                        : connectionManager.getControlInputStream();
+
+                while (connectionManager != null
+                        && (connectionManager.isVideoConnected() || connectionManager.isControlConnected())) {
+                    PacketParser.Packet packet = PacketParser.read(videoIn);
 
                     if (packet.type() == PacketType.FRAME_DATA) {
                         byte[] payload = packet.payload();
@@ -524,7 +558,32 @@ public class RemoteViewFrame extends JFrame {
                             FramePacket frame = new FramePacket(timestamp, imgData);
                             updateScreen(frame);
                         }
-                    } else if (packet.type() == PacketType.PONG) {
+                    }
+                    // Ignore non-FRAME packets on video stream (should not arrive)
+                }
+            } catch (IOException e) {
+                System.err.println("[RemoteViewFrame] Mất kết nối Video Channel: " + e.getMessage());
+                receiverRunning = false;  // allow restart after reconnect
+                if (disconnectCallback != null && disconnectFired.compareAndSet(false, true)) {
+                    disconnectCallback.run();
+                }
+            }
+        }, "VideoReceiverThread").start();
+    }
+
+    /**
+     * Reads control packets (PONG, DIR_RESP, FILE_*, CLIPBOARD_SYNC, DISCONNECT)
+     * from the Control Channel input stream.
+     */
+    private void startControlReceiver() {
+        new Thread(() -> {
+            try {
+                DataInputStream controlIn = connectionManager.getControlInputStream();
+
+                while (connectionManager != null && connectionManager.isControlConnected()) {
+                    PacketParser.Packet packet = PacketParser.read(controlIn);
+
+                    if (packet.type() == PacketType.PONG) {
                         onPongReceived(packet.payload());
                     } else if (packet.type() == PacketType.DIR_RESP) {
                         if (fileTransferService != null) {
@@ -557,15 +616,26 @@ public class RemoteViewFrame extends JFrame {
                             disconnectAndExit();
                         });
                         break;
+                    } else if (packet.type() == PacketType.FRAME_DATA) {
+                        // Legacy single-socket mode: server sends frames on control channel
+                        byte[] payload = packet.payload();
+                        if (payload.length >= 8) {
+                            ByteBuffer bb = ByteBuffer.wrap(payload);
+                            long timestamp = bb.getLong();
+                            byte[] imgData = new byte[payload.length - 8];
+                            bb.get(imgData);
+                            updateScreen(new FramePacket(timestamp, imgData));
+                        }
                     }
                 }
             } catch (IOException e) {
-                System.err.println("[RemoteViewFrame] Mất kết nối luồng video: " + e.getMessage());
-                if (disconnectCallback != null) {
+                System.err.println("[RemoteViewFrame] Mất kết nối Control Channel: " + e.getMessage());
+                receiverRunning = false;
+                if (disconnectCallback != null && disconnectFired.compareAndSet(false, true)) {
                     disconnectCallback.run();
                 }
             }
-        }, "Video-Receiver-Thread").start();
+        }, "ControlReceiverThread").start();
     }
 
     public void updateScreen(FramePacket framePacket) {

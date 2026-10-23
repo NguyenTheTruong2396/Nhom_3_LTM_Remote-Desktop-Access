@@ -15,6 +15,7 @@ import java.io.IOException;
 public class EventSender {
 
     private final DataOutputStream out;
+    private volatile boolean stopped = false;
 
     public EventSender(DataOutputStream out) {
         this.out = out;
@@ -27,7 +28,7 @@ public class EventSender {
      * @param packet Đối tượng sự kiện phím hoặc chuột
      */
     public synchronized void send(InputEventPacket packet) {
-        if (packet == null || out == null) {
+        if (packet == null || out == null || stopped) {
             return;
         }
 
@@ -41,7 +42,15 @@ public class EventSender {
 
            
         } catch (IOException e) {
-            System.err.println("[EventSender] Lỗi gửi sự kiện phím/chuột: " + e.getMessage());
+            if (!stopped) {
+                stopped = true;
+                System.err.println("[EventSender] Socket đóng, dừng gửi sự kiện: " + e.getMessage());
+            }
         }
+    }
+
+    /** Đánh dấu EventSender đã dừng — không gửi thêm events và không log lỗi nữa. */
+    public void stop() {
+        stopped = true;
     }
 }
