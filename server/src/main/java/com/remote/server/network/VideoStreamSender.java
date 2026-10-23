@@ -28,7 +28,8 @@ import java.util.Iterator;
  * có cơ chế dự phòng Java Robot), đóng gói thành FramePacket và chiếu
  * liên tục qua TCP Socket tới Client đã kết nối.
  *
- * Chạy trên luồng riêng biệt để đảm bảo không làm tắc nghẽn luồng xử lý điều khiển.
+ * Chạy trên luồng riêng biệt để đảm bảo không làm tắc nghẽn luồng xử lý điều
+ * khiển.
  */
 public class VideoStreamSender implements Runnable {
 
@@ -38,8 +39,9 @@ public class VideoStreamSender implements Runnable {
     private Thread streamThread;
 
     // Cấu hình truyền phát
-    private int targetFps = 30;
-    private int quality = 60; // Mức chất lượng JPEG (1 - 100)
+    private int targetFps = 60;
+    private int quality = 45; // Java-fallback: 45 is optimal for scaled-down frames
+    private static final float FALLBACK_SCALE = 0.75f; // Scale to 75% before JPEG compress
 
     // Dự phòng Java AWT Robot khi native DLL chưa nạp
     private Robot fallbackRobot;
@@ -47,7 +49,8 @@ public class VideoStreamSender implements Runnable {
     private ImageWriter jpegWriter;
     private ImageWriteParam jpegWriteParam;
 
-    // Reflection cache cho JNI capture method (tránh lỗi biên dịch khi class JniBridge chưa cập nhật method)
+    // Reflection cache cho JNI capture method (tránh lỗi biên dịch khi class
+    // JniBridge chưa cập nhật method)
     private Method jniCaptureMethod = null;
     private boolean jniChecked = false;
 
@@ -221,13 +224,15 @@ public class VideoStreamSender implements Runnable {
                 byte[] nativeData = JniBridge.captureFrame(quality);
                 if (nativeData != null && nativeData.length > 0) {
                     if (!nativeModeLogged) {
-                        System.out.println("[VideoStreamSender] >>> ĐANG SỬ DỤNG C/C++ NATIVE-CORE (GDI + STB) ĐỂ CHỤP VÀ NÉN FRAME! <<<");
+                        System.out.println(
+                                "[VideoStreamSender] >>> ĐANG SỬ DỤNG C/C++ NATIVE-CORE (GDI + STB) ĐỂ CHỤP VÀ NÉN FRAME! <<<");
                         nativeModeLogged = true;
                     }
                     return nativeData;
                 }
             } catch (UnsatisfiedLinkError | Exception e) {
-                System.err.println("[VideoStreamSender] Lỗi khi gọi JNI: " + e.getMessage() + ", chuyển sang Java Fallback.");
+                System.err.println(
+                        "[VideoStreamSender] Lỗi khi gọi JNI: " + e.getMessage() + ", chuyển sang Java Fallback.");
             }
         }
 
@@ -249,16 +254,26 @@ public class VideoStreamSender implements Runnable {
                 return null;
             }
 
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            // Scale down to reduce JPEG encoding time (key bottleneck in Java fallback)
+            int scaledW = (int) (screenCapture.getWidth() * FALLBACK_SCALE);
+            int scaledH = (int) (screenCapture.getHeight() * FALLBACK_SCALE);
+            BufferedImage scaled = new BufferedImage(scaledW, scaledH, BufferedImage.TYPE_3BYTE_BGR);
+            java.awt.Graphics2D g2d = scaled.createGraphics();
+            g2d.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION,
+                    java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g2d.drawImage(screenCapture, 0, 0, scaledW, scaledH, null);
+            g2d.dispose();
+
+            ByteArrayOutputStream baos = new ByteArrayOutputStream(scaledW * scaledH / 4);
             if (jpegWriter != null) {
                 synchronized (jpegWriter) {
                     try (MemoryCacheImageOutputStream mcios = new MemoryCacheImageOutputStream(baos)) {
                         jpegWriter.setOutput(mcios);
-                        jpegWriter.write(null, new IIOImage(screenCapture, null, null), jpegWriteParam);
+                        jpegWriter.write(null, new IIOImage(scaled, null, null), jpegWriteParam);
                     }
                 }
             } else {
-                ImageIO.write(screenCapture, "jpg", baos);
+                ImageIO.write(scaled, "jpg", baos);
             }
 
             return baos.toByteArray();

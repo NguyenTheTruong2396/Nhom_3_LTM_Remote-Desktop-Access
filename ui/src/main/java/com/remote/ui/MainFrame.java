@@ -130,7 +130,10 @@ public class MainFrame extends JFrame {
         }
 
         try {
-            sessionManager = new SessionManager(8888);
+            // Phase 5: dual-socket (control=5002, video=5001)
+            sessionManager = new SessionManager(
+                    com.remote.common.network.NetworkConstants.DEFAULT_CONTROL_PORT,
+                    com.remote.common.network.NetworkConstants.DEFAULT_VIDEO_PORT);
             sessionInfo = sessionManager.createSession();
 
             try {
@@ -180,7 +183,7 @@ public class MainFrame extends JFrame {
                             for (InterfaceAddress ifAddr : nif.getInterfaceAddresses()) {
                                 InetAddress addr = ifAddr.getAddress();
                                 if (addr instanceof Inet4Address) {
-                                    String payload = "HKTNP_SERVER|" + sessionInfo.getSessionId() + "|" + addr.getHostAddress() + "|8888";
+                        String payload = "HKTNP_SERVER|" + sessionInfo.getSessionId() + "|" + addr.getHostAddress() + "|5002";
                                     byte[] buffer = payload.getBytes(StandardCharsets.UTF_8);
 
                                     InetAddress bcast = ifAddr.getBroadcast();
@@ -911,7 +914,7 @@ public class MainFrame extends JFrame {
                 if (connLocal != null) return connLocal;
 
                 // 5. Tự động dò quét dải mạng LAN để tìm Server
-                publish("Đang quét tự động mạng LAN tìm máy Server (Port 8888)...");
+                publish("Đang quét tự động mạng LAN tìm máy Server (Port 5002)...");
                 List<String> candidateIps = findSubnetCandidateIps();
                 for (String candIp : candidateIps) {
                     publish("Đang thử kết nối máy " + candIp + "...");
@@ -969,7 +972,7 @@ public class MainFrame extends JFrame {
                             lblClientStatus.setForeground(new Color(255, 120, 120));
                             JOptionPane.showMessageDialog(MainFrame.this,
                                     (errorMessage != null ? errorMessage : "Kết nối thất bại!") +
-                                    "\n\n💡 Gợi ý:\n- Đảm bảo máy Server đã bật và mở port 8888.\n- Đảm bảo 2 máy kết nối chung Wi-Fi hoặc ZeroTier.\n- Có thể nhập trực tiếp IP của máy Server vào ô ID.",
+                                    "\n\n💡 Gợi ý:\n- Đảm bảo máy Server đã bật và mở port 5002 (Control) và 5001 (Video).\n- Đảm bảo 2 máy kết nối chung Wi-Fi hoặc ZeroTier.\n- Có thể nhập trực tiếp IP của máy Server vào ô ID.",
                                     "Kết nối thất bại", JOptionPane.ERROR_MESSAGE);
                         }
                     }
@@ -983,29 +986,66 @@ public class MainFrame extends JFrame {
         worker.execute();
     }
 
-    private ConnectionManager tryConnect(String host, String sessionId, String passcode, java.util.concurrent.atomic.AtomicBoolean authFailedFlag) {
+    /**
+     * Phase 5 — Dual-socket tryConnect.
+     * Connects control channel, authenticates (parses "OK|token" from AUTH_RESP),
+     * then opens the video channel with the received stream token.
+     */
+    private ConnectionManager tryConnect(String host, String sessionId, String passcode,
+                                         java.util.concurrent.atomic.AtomicBoolean authFailedFlag) {
         if (host == null || host.trim().isEmpty()) return null;
         try {
-            ConnectionManager conn = new ConnectionManager(host.trim(), 8888);
-            conn.connect();
+            ConnectionManager conn = new ConnectionManager(
+                    host.trim(),
+                    com.remote.common.network.NetworkConstants.DEFAULT_CONTROL_PORT,
+                    com.remote.common.network.NetworkConstants.DEFAULT_VIDEO_PORT);
+            conn.connectControl();
 
-            DataInputStream dis = conn.getInputStream();
-            DataOutputStream dos = conn.getOutputStream();
+            DataInputStream  dis = conn.getControlInputStream();
+            DataOutputStream dos = conn.getControlOutputStream();
 
+            // Send AUTH_REQ
             String authPayload = sessionId + "|" + passcode;
             byte[] payloadBytes = authPayload.getBytes(StandardCharsets.UTF_8);
             PacketBuilder.write(dos, PacketType.AUTH_REQ, payloadBytes);
 
+            // Read AUTH_RESP: "OK|streamToken" or "FAIL" or legacy byte
             PacketParser.Packet resp = PacketParser.read(dis);
-            if (resp.type() == PacketType.AUTH_RESP && resp.payload().length > 0 && resp.payload()[0] == 1) {
-                return conn;
-            } else {
-                if (authFailedFlag != null) {
-                    authFailedFlag.set(true);
-                }
+            if (resp.type() != PacketType.AUTH_RESP) {
                 conn.disconnect();
                 return null;
             }
+
+            String body = resp.payloadAsString();
+            boolean authOk = false;
+            String streamToken = "";
+
+            if (body != null && body.startsWith("OK|")) {
+                authOk = true;
+                streamToken = body.substring(3);
+            } else if (resp.payload().length > 0 && resp.payload()[0] == 1) {
+                // Backward-compat: legacy 1-byte success (no token)
+                authOk = true;
+            }
+
+            if (!authOk) {
+                if (authFailedFlag != null) authFailedFlag.set(true);
+                conn.disconnect();
+                return null;
+            }
+
+            // Pair Video Channel if we received a token
+            if (!streamToken.isEmpty()) {
+                try {
+                    conn.connectVideo(sessionId, streamToken);
+                } catch (Exception e) {
+                    System.err.println("[MainFrame] Video pairing failed: " + e.getMessage());
+                    // Connection still valid for control-only legacy mode
+                }
+            }
+
+            return conn;
+
         } catch (Exception ignored) {
             return null;
         }
@@ -1032,7 +1072,8 @@ public class MainFrame extends JFrame {
                                 if (targetIp.equals(myIp)) continue;
                                 futures.add(pool.submit(() -> {
                                     try (Socket s = new Socket()) {
-                                        s.connect(new InetSocketAddress(targetIp, 8888), 350);
+                                        s.connect(new InetSocketAddress(targetIp,
+                                                com.remote.common.network.NetworkConstants.DEFAULT_CONTROL_PORT), 350);
                                         return targetIp;
                                     } catch (Exception e) {
                                         return null;
