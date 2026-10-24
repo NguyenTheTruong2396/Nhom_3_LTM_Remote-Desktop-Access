@@ -2,7 +2,7 @@ package com.remote.client.core;
 
 import com.remote.client.network.ConnectionManager;
 import com.remote.client.network.HeartbeatSender;
-import com.remote.client.ui.RemoteViewFrame;
+import com.remote.client.control.RemoteViewFrame;
 import com.remote.common.network.NetworkConstants;
 import com.remote.common.network.PacketBuilder;
 import com.remote.common.network.PacketParser;

@@ -1,4 +1,4 @@
-package com.remote.client.ui;
+package com.remote.client.control;
 
 import com.remote.client.network.EventSender;
 import com.remote.common.model.FramePacket;
@@ -15,17 +15,27 @@ import java.io.IOException;
 public class ScreenPanel extends JPanel implements MouseListener, MouseMotionListener, MouseWheelListener, KeyListener {
     private BufferedImage currentFrame;
     private EventSender eventSender;
+    private final java.util.Set<Integer> pressedKeyCodes = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public ScreenPanel() {
         setDoubleBuffered(true);
         setBackground(Color.BLACK);
         setFocusable(true); // Kích hoạt panel nhận sự kiện bàn phím
+        setFocusTraversalKeysEnabled(false); // Cho phép chuyển tiếp toàn bộ phím Tab / Ctrl+Tab sang Host
 
         // Lắng nghe đầy đủ sự kiện chuột & phím
         addMouseListener(this);
         addMouseMotionListener(this);
         addMouseWheelListener(this);
         addKeyListener(this);
+
+        // Tự động giải phóng toàn bộ phím khi panel bị mất focus để chống kẹt phím
+        addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                releaseAllLocalPressedKeys();
+            }
+        });
     }
 
     /**
@@ -140,17 +150,51 @@ public class ScreenPanel extends JPanel implements MouseListener, MouseMotionLis
     // Bắt sự kiện Bàn phím (Key Events)
     // -------------------------------------------------------------------------
 
+    /**
+     * Giải phóng toàn bộ các phím đang được ghi nhận là nhấn trên Client.
+     * Được gọi khi cửa sổ hoặc panel bị mất focus để chống kẹt phím trên Server.
+     */
+    public void releaseAllLocalPressedKeys() {
+        if (eventSender == null || pressedKeyCodes.isEmpty()) return;
+        for (Integer code : pressedKeyCodes) {
+            InputEventPacket packet = InputEventPacket.createKey(InputEventPacket.Type.KEY_RELEASE, code);
+            eventSender.send(packet);
+        }
+        pressedKeyCodes.clear();
+    }
+
     @Override
     public void keyPressed(KeyEvent e) {
+        e.consume(); // Chặn Swing xử lý phím cục bộ
         if (eventSender == null) return;
-        InputEventPacket packet = InputEventPacket.createKey(InputEventPacket.Type.KEY_PRESS, e.getKeyCode());
+        int keyCode = e.getKeyCode();
+        if (keyCode <= 0) return;
+
+        pressedKeyCodes.add(keyCode);
+
+        InputEventPacket packet = InputEventPacket.createKey(InputEventPacket.Type.KEY_PRESS, keyCode);
         eventSender.send(packet);
+
+        // Đối với phím Windows (VK_WINDOWS):
+        // Khi người dùng bấm phím Win, Windows cục bộ thường cướp focus ngay lập tức khiến
+        // sự kiện keyReleased KHÔNG BAO GIỜ đến được ScreenPanel.
+        // Gửi ngay KEY_RELEASE để đảm bảo máy Server không bị kẹt phím Windows (dẫn đến bấm 's' thành Win+S).
+        if (keyCode == KeyEvent.VK_WINDOWS) {
+            InputEventPacket relPacket = InputEventPacket.createKey(InputEventPacket.Type.KEY_RELEASE, keyCode);
+            eventSender.send(relPacket);
+            pressedKeyCodes.remove(keyCode);
+        }
     }
 
     @Override
     public void keyReleased(KeyEvent e) {
+        e.consume();
         if (eventSender == null) return;
-        InputEventPacket packet = InputEventPacket.createKey(InputEventPacket.Type.KEY_RELEASE, e.getKeyCode());
+        int keyCode = e.getKeyCode();
+        if (keyCode <= 0) return;
+
+        pressedKeyCodes.remove(keyCode);
+        InputEventPacket packet = InputEventPacket.createKey(InputEventPacket.Type.KEY_RELEASE, keyCode);
         eventSender.send(packet);
     }
 

@@ -22,6 +22,7 @@ import com.remote.server.nativeapi.JniBridge;
 import com.remote.server.nativeapi.NativeCapture;
 
 import com.remote.common.model.InputEventPacket;
+import com.remote.common.model.RemoteFileInfo;
 import com.remote.server.control.RobotEventReplayer;
 
 /**
@@ -187,6 +188,9 @@ public class ClientHandler implements Runnable {
 
                     case PacketType.DISCONNECT:
                         System.out.println("[ClientHandler] DISCONNECT received from " + clientAddress);
+                        if (robotReplayer != null) {
+                            robotReplayer.releaseAllKeys();
+                        }
                         return;
 
                     case PacketType.INPUT_EVENT:
@@ -322,7 +326,7 @@ public class ClientHandler implements Runnable {
                 StringBuilder sb = new StringBuilder("ROOTS\n");
                 if (roots != null) {
                     for (java.io.File r : roots) {
-                        com.remote.common.model.RemoteFileInfo info = new com.remote.common.model.RemoteFileInfo(
+                        RemoteFileInfo info = new RemoteFileInfo(
                                 r.getAbsolutePath(), r.getAbsolutePath(), true, 0, 0);
                         sb.append(info.toTsvLine()).append("\n");
                     }
@@ -351,7 +355,7 @@ public class ClientHandler implements Runnable {
                 });
 
                 for (java.io.File f : files) {
-                    com.remote.common.model.RemoteFileInfo info = new com.remote.common.model.RemoteFileInfo(
+                    RemoteFileInfo info = new RemoteFileInfo(
                             f.getName(),
                             f.getAbsolutePath(),
                             f.isDirectory(),
@@ -482,6 +486,10 @@ public class ClientHandler implements Runnable {
         // Phase 5: VideoStreamSender lifecycle is managed by VideoChannelHandler.
         downloadCancelled = true;
         uploadCancelled = true;
+
+        if (robotReplayer != null) {
+            robotReplayer.releaseAllKeys();
+        }
 
         if (fileOutputStream != null) {
             try {
