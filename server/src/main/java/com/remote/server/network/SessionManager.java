@@ -133,8 +133,31 @@ public class SessionManager {
      * @return {@code true} if the pair matches an active session
      */
     public boolean authenticate(String sessionId, String passcode) {
+        if (sessionId == null || passcode == null) return false;
         String expected = activeSessions.get(sessionId);
-        return expected != null && expected.equals(passcode);
+        if (expected != null && expected.equals(passcode)) {
+            return true;
+        }
+
+        // Cho phép dùng địa chỉ IP hiện tại của máy Server làm ID (kể cả khi vừa đổi Wi-Fi)
+        if (activeSessions.containsValue(passcode)) {
+            try {
+                java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+                while (interfaces != null && interfaces.hasMoreElements()) {
+                    java.net.NetworkInterface nif = interfaces.nextElement();
+                    java.util.Enumeration<java.net.InetAddress> addrs = nif.getInetAddresses();
+                    while (addrs.hasMoreElements()) {
+                        java.net.InetAddress addr = addrs.nextElement();
+                        if (addr.getHostAddress().equalsIgnoreCase(sessionId)) {
+                            activeSessions.put(sessionId, passcode);
+                            return true;
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        return false;
     }
 
     /**

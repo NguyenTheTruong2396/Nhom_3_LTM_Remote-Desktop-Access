@@ -1,4 +1,4 @@
-package com.remote.client.ui;
+package com.remote.client.control;
 
 import com.remote.client.network.FileTransferService;
 import com.remote.client.network.FileTransferService.FileTransferCallback;

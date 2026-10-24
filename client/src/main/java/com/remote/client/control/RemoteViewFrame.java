@@ -1,10 +1,11 @@
-package com.remote.client.ui;
+package com.remote.client.control;
 
 import com.remote.client.network.ConnectionManager;
 import com.remote.client.network.EventSender;
 import com.remote.client.network.FileSender;
 import com.remote.client.network.FileTransferService;
 import com.remote.common.model.FramePacket;
+import com.remote.common.model.InputEventPacket;
 import com.remote.common.network.PacketBuilder;
 import com.remote.common.network.PacketParser;
 import com.remote.common.network.PacketType;
@@ -107,11 +108,19 @@ public class RemoteViewFrame extends JFrame {
         // 3. Khởi động gửi Ping định kỳ đo RTT
         startPingScheduler();
 
-        // 4. Lắng nghe đóng cửa sổ
+        // 4. Lắng nghe đóng cửa sổ & mất focus
         addWindowListener(new WindowAdapter() {
             @Override
             public void windowClosing(WindowEvent e) {
                 confirmAndDisconnect();
+            }
+        });
+        addWindowFocusListener(new WindowAdapter() {
+            @Override
+            public void windowLostFocus(WindowEvent e) {
+                if (screenPanel != null) {
+                    screenPanel.releaseAllLocalPressedKeys();
+                }
             }
         });
     }
@@ -153,9 +162,21 @@ public class RemoteViewFrame extends JFrame {
 
         bar.add(leftCluster, BorderLayout.WEST);
 
-        // --- CỤM BÊN PHẢI: Các nút chức năng (Đồng bộ Clipboard, Quản lý File 2 chiều, Dừng kết nối) ---
+        // --- CỤM BÊN PHẢI: Các nút chức năng (Start Menu, Đồng bộ Clipboard, Quản lý File, Dừng kết nối) ---
         JPanel rightCluster = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
         rightCluster.setOpaque(false);
+
+        // Nút Mở Start Menu (Phím Windows an toàn): Kích thước 120x32
+        JButton btnWinStart = createVectorActionButton(
+                ButtonIconType.WINDOWS_START,
+                "Start Menu",
+                new Color(0x25, 0x63, 0xEB),
+                new Color(0x3B, 0x82, 0xF6)
+        );
+        btnWinStart.setPreferredSize(new Dimension(120, 32));
+        btnWinStart.setToolTipText("Bật/tắt Start Menu trên máy Host an toàn không sợ cướp phím");
+        btnWinStart.addActionListener(e -> sendWindowsKeyTap());
+        rightCluster.add(btnWinStart);
 
         // Nút Đồng bộ Clipboard: Kích thước 150x32
         JButton btnClipboard = createVectorActionButton(
@@ -196,7 +217,7 @@ public class RemoteViewFrame extends JFrame {
     }
 
     private enum MetricType { PING, FPS }
-    private enum ButtonIconType { FILE_TRANSFER, CLIPBOARD, DISCONNECT }
+    private enum ButtonIconType { FILE_TRANSFER, CLIPBOARD, DISCONNECT, WINDOWS_START }
 
     private static class MetricBadge extends JLabel {
         private final MetricType type;
@@ -307,6 +328,12 @@ public class RemoteViewFrame extends JFrame {
                     g2.fillRect(startX + 3, iconY, 4, 3);
                     g2.drawLine(startX + 2, iconY + 5, startX + 8, iconY + 5);
                     g2.drawLine(startX + 2, iconY + 8, startX + 8, iconY + 8);
+                } else if (iconType == ButtonIconType.WINDOWS_START) {
+                    // Vẽ biểu tượng 4 ô vuông Start Menu (Windows Grid)
+                    g2.fillRect(startX, iconY + 1, 4, 4);
+                    g2.fillRect(startX + 6, iconY + 1, 4, 4);
+                    g2.fillRect(startX, iconY + 7, 4, 4);
+                    g2.fillRect(startX + 6, iconY + 7, 4, 4);
                 } else {
                     // Vẽ biểu tượng dừng / ngắt kết nối (hình vuông stop)
                     g2.fillRoundRect(startX, iconY + 1, 10, 10, 2, 2);
@@ -328,8 +355,19 @@ public class RemoteViewFrame extends JFrame {
         btn.setContentAreaFilled(false);
         btn.setBorderPainted(false);
         btn.setFocusPainted(false);
+        btn.setFocusable(false); // Tránh chiếm focus bàn phím của ScreenPanel
         btn.setCursor(new Cursor(Cursor.HAND_CURSOR));
         return btn;
+    }
+
+    private void sendWindowsKeyTap() {
+        if (eventSender != null) {
+            eventSender.send(InputEventPacket.createKey(InputEventPacket.Type.KEY_PRESS, java.awt.event.KeyEvent.VK_WINDOWS));
+            eventSender.send(InputEventPacket.createKey(InputEventPacket.Type.KEY_RELEASE, java.awt.event.KeyEvent.VK_WINDOWS));
+        }
+        if (screenPanel != null) {
+            screenPanel.requestFocusInWindow();
+        }
     }
 
     private void openFileTransferManager() {
@@ -564,9 +602,7 @@ public class RemoteViewFrame extends JFrame {
             } catch (IOException e) {
                 System.err.println("[RemoteViewFrame] Mất kết nối Video Channel: " + e.getMessage());
                 receiverRunning = false;  // allow restart after reconnect
-                if (disconnectCallback != null && disconnectFired.compareAndSet(false, true)) {
-                    disconnectCallback.run();
-                }
+                handleConnectionLoss("Video Channel");
             }
         }, "VideoReceiverThread").start();
     }
@@ -631,11 +667,26 @@ public class RemoteViewFrame extends JFrame {
             } catch (IOException e) {
                 System.err.println("[RemoteViewFrame] Mất kết nối Control Channel: " + e.getMessage());
                 receiverRunning = false;
-                if (disconnectCallback != null && disconnectFired.compareAndSet(false, true)) {
-                    disconnectCallback.run();
-                }
+                handleConnectionLoss("Control Channel");
             }
         }, "ControlReceiverThread").start();
+    }
+
+    private void handleConnectionLoss(String channel) {
+        if (!disconnectFired.compareAndSet(false, true)) {
+            return;
+        }
+
+        if (disconnectCallback != null) {
+            disconnectCallback.run();
+        } else {
+            SwingUtilities.invokeLater(() -> {
+                JOptionPane.showMessageDialog(this,
+                        "Mất kết nối với máy chủ (" + channel + ")!\nĐường truyền đã bị ngắt hoặc mạng đã thay đổi.\nỨng dụng sẽ trở về màn hình chính.",
+                        "Mất kết nối mạng", JOptionPane.WARNING_MESSAGE);
+                disconnectAndExit();
+            });
+        }
     }
 
     public void updateScreen(FramePacket framePacket) {

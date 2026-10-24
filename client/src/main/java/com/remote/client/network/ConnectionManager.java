@@ -5,6 +5,7 @@ import com.remote.common.network.NetworkConstants;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 
 /**
@@ -81,17 +82,30 @@ public class ConnectionManager implements AutoCloseable {
         this(host, port, NetworkConstants.DEFAULT_VIDEO_PORT);
     }
 
+    public static final int DEFAULT_CONNECT_TIMEOUT_MS = 2000;
+
     // ---- Control Channel -----------------------------------------------------
 
     /**
-     * Establishes a TCP connection to the server's Control Channel.
+     * Establishes a TCP connection to the server's Control Channel with default timeout (2s).
      *
      * @throws IOException if connection fails
      */
     public void connectControl() throws IOException {
+        connectControl(DEFAULT_CONNECT_TIMEOUT_MS);
+    }
+
+    /**
+     * Establishes a TCP connection to the server's Control Channel with explicit timeout.
+     *
+     * @param timeoutMs connect timeout in milliseconds
+     * @throws IOException if connection fails
+     */
+    public void connectControl(int timeoutMs) throws IOException {
         System.out.println("[ConnectionManager] Connecting CONTROL channel to "
-                + host + ":" + controlPort + "...");
-        controlSocket = new Socket(host, controlPort);
+                + host + ":" + controlPort + " (timeout: " + timeoutMs + "ms)...");
+        controlSocket = new Socket();
+        controlSocket.connect(new InetSocketAddress(host, controlPort), timeoutMs);
         controlSocket.setTcpNoDelay(true);
         controlInputStream  = new DataInputStream(controlSocket.getInputStream());
         controlOutputStream = new DataOutputStream(controlSocket.getOutputStream());
@@ -112,7 +126,7 @@ public class ConnectionManager implements AutoCloseable {
     // ---- Video Channel -------------------------------------------------------
 
     /**
-     * Opens the Video Channel socket and performs the VIDEO_HANDSHAKE_REQ pairing.
+     * Opens the Video Channel socket and performs the VIDEO_HANDSHAKE_REQ pairing with default timeout (2s).
      * Must be called after a successful {@link #connectControl()} + authentication.
      *
      * @param sessionId   the authenticated session ID
@@ -121,9 +135,23 @@ public class ConnectionManager implements AutoCloseable {
      * @throws SecurityException if the server rejects the stream token
      */
     public void connectVideo(String sessionId, String streamToken) throws IOException {
+        connectVideo(sessionId, streamToken, DEFAULT_CONNECT_TIMEOUT_MS);
+    }
+
+    /**
+     * Opens the Video Channel socket and performs the VIDEO_HANDSHAKE_REQ pairing with explicit timeout.
+     *
+     * @param sessionId   the authenticated session ID
+     * @param streamToken the one-time token received in the AUTH_RESP payload
+     * @param timeoutMs   connect timeout in milliseconds
+     * @throws IOException if the connection or handshake fails
+     * @throws SecurityException if the server rejects the stream token
+     */
+    public void connectVideo(String sessionId, String streamToken, int timeoutMs) throws IOException {
         System.out.println("[ConnectionManager] Connecting VIDEO channel to "
-                + host + ":" + videoPort + "...");
-        videoSocket = new Socket(host, videoPort);
+                + host + ":" + videoPort + " (timeout: " + timeoutMs + "ms)...");
+        videoSocket = new Socket();
+        videoSocket.connect(new InetSocketAddress(host, videoPort), timeoutMs);
         videoSocket.setTcpNoDelay(true);
         videoSocket.setReceiveBufferSize(512 * 1024);
         videoInputStream = new DataInputStream(videoSocket.getInputStream());

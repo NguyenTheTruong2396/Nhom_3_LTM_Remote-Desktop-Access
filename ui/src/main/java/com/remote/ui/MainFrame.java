@@ -1,7 +1,7 @@
 package com.remote.ui;
 
 import com.remote.client.network.ConnectionManager;
-import com.remote.client.ui.RemoteViewFrame;
+import com.remote.client.control.RemoteViewFrame;
 import com.remote.common.network.PacketBuilder;
 import com.remote.common.network.PacketParser;
 import com.remote.common.network.PacketType;
@@ -885,13 +885,18 @@ public class MainFrame extends JFrame {
                     publish("Đã tìm thấy Server (" + host + "), đang kết nối...");
                     ConnectionManager conn = tryConnect(host, reqSessionId, reqPasscode, authFailedFlag);
                     if (conn != null) return conn;
+                    discoveredServers.remove(reqSessionId); // Xóa IP cũ không còn hoạt động
                 }
 
                 // 2. Thử các máy chủ vừa phát hiện trong discoveredServers
-                for (String host : discoveredServers.values()) {
+                java.util.Iterator<Map.Entry<String, String>> it = discoveredServers.entrySet().iterator();
+                while (it.hasNext()) {
+                    Map.Entry<String, String> entry = it.next();
+                    String host = entry.getValue();
                     publish("Đang thử kết nối tới " + host + "...");
                     ConnectionManager conn = tryConnect(host, reqSessionId, reqPasscode, authFailedFlag);
                     if (conn != null) return conn;
+                    it.remove(); // Xóa IP chết khỏi cache để không làm chậm lần thử sau
                 }
 
                 // 3. Nếu người dùng nhập trực tiếp IP (hoặc ID@IP)

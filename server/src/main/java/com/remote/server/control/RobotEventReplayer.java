@@ -3,15 +3,21 @@ package com.remote.server.control;
 import com.remote.common.model.InputEventPacket;
 
 import java.awt.*;
+import java.awt.event.KeyEvent;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class RobotEventReplayer {
     private Robot robot;
     private final Dimension screenSize;
+    private final Set<Integer> pressedKeys = ConcurrentHashMap.newKeySet();
 
     public RobotEventReplayer() {
         this.screenSize = Toolkit.getDefaultToolkit().getScreenSize();
         try {
             this.robot = new Robot();
+            // Đảm bảo không bị kẹt các phím điều khiển (như Windows, Ctrl, Alt) từ phiên trước
+            releaseAllKeys();
         } catch (AWTException e) {
             e.printStackTrace();
             this.robot = null;
@@ -50,18 +56,71 @@ public class RobotEventReplayer {
                 } catch (IllegalArgumentException ignored) {}
             }
             case KEY_PRESS -> {
+                int keyCode = event.getKeyCode();
+                if (keyCode <= 0) return;
+
+                // Xử lý đặc thù cho phím Windows (VK_WINDOWS):
+                // Phím Windows trên hệ điều hành Windows rất dễ gây kẹt phím nếu giữ trạng thái DOWN,
+                // khiến các phím gõ tiếp theo (như 's') bị hiểu thành Win+S (mở Start Menu / Search).
+                // Do đó, khi nhận lệnh phím Windows, thực hiện TAP (nhấn và nhả ngay) để bật/tắt Start Menu an toàn.
+                if (keyCode == KeyEvent.VK_WINDOWS) {
+                    try {
+                        robot.keyPress(KeyEvent.VK_WINDOWS);
+                        robot.keyRelease(KeyEvent.VK_WINDOWS);
+                    } catch (IllegalArgumentException ignored) {}
+                    return;
+                }
+
                 try {
-                    robot.keyPress(event.getKeyCode());
+                    robot.keyPress(keyCode);
+                    pressedKeys.add(keyCode);
                 } catch (IllegalArgumentException ignored) {
                     // Tránh crash nếu gặp keycode đặc thù của hệ điều hành không được Robot hỗ trợ
                 }
             }
             case KEY_RELEASE -> {
+                int keyCode = event.getKeyCode();
+                if (keyCode <= 0) return;
+
+                if (keyCode == KeyEvent.VK_WINDOWS) {
+                    // Phím Windows đã được nhả an toàn ngay từ lúc KEY_PRESS nên không cần nhả lại
+                    return;
+                }
+
                 try {
-                    robot.keyRelease(event.getKeyCode());
+                    robot.keyRelease(keyCode);
+                    pressedKeys.remove(keyCode);
                 } catch (IllegalArgumentException ignored) {
                 }
             }
+        }
+    }
+
+    /**
+     * Giải phóng toàn bộ các phím đang được giữ và các phím điều khiển (modifiers)
+     * để chống hoàn toàn lỗi kẹt phím (như kẹt phím Windows, Ctrl, Alt, Shift).
+     */
+    public void releaseAllKeys() {
+        if (robot == null) return;
+
+        for (Integer code : pressedKeys) {
+            try {
+                robot.keyRelease(code);
+            } catch (Exception ignored) {}
+        }
+        pressedKeys.clear();
+
+        int[] commonModifiers = {
+            KeyEvent.VK_WINDOWS,
+            KeyEvent.VK_CONTROL,
+            KeyEvent.VK_ALT,
+            KeyEvent.VK_SHIFT,
+            KeyEvent.VK_META
+        };
+        for (int mod : commonModifiers) {
+            try {
+                robot.keyRelease(mod);
+            } catch (Exception ignored) {}
         }
     }
 
